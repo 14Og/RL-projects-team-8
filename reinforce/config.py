@@ -9,6 +9,13 @@ class RobotConfig:
     wrap_angles: bool = True
     dtheta_max: Optional[float] = 0.1
 
+@dataclass(frozen=True)
+class LidarConfig:
+    lidar_joints: bool = True    # attach a lidar at each joint (excluding base)
+    lidar_midlinks: bool = False  # attach a lidar at each link midpoint
+    num_rays: int = 8             # rays per lidar, uniformly spread over full 360°
+    ray_maxlen_px: float = 100.0     # max cast distance; normalized hit distance in [0, 1]
+
 @dataclass
 class ModelConfig:
     gamma: float = 0.99
