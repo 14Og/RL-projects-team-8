@@ -57,9 +57,13 @@ class EnvConfig:
     obstacles_num: int = 5
     obstacles_radius_min: float = 10.0
     obstacles_radius_max: float = 30.0
-    obstacles_area: Tuple[float, float, float, float] = (100, 700, 100, 700)  # область появления
+    obstacles_area: Tuple[float, float, float, float] = (100, 700, 100, 700)
     obstacles_check_robot: bool = True
     obstacles_check_overlap: bool = True
+
+    # Новые параметры для генерации цели
+    min_target_distance_from_ee: float = 0.0      # минимальное расстояние от начального положения схвата
+    target_line_of_sight: bool = False            # проверять ли прямую видимость от базы до цели
     
 @dataclass
 class GUIConfig:

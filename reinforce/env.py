@@ -99,9 +99,11 @@ class Environment:
         self._train_mode = bool(train)
 
         self.robot.reset(randomize=randomize_theta)
+        ee_start = self.robot.end_effector_xy()
 
+        # Генерация цели с учётом текущего положения ee и препятствий
         if self.env_cfg.randomize_target:
-            self.target = self._sample_reachable_target()
+            self.target = self._sample_valid_target(ee_start)
 
         self.robot.set_target(self.target)
 
@@ -220,13 +222,74 @@ class Environment:
         }
 
     def _sample_reachable_target(self) -> np.ndarray:
+        """(Legacy) старый метод без проверок, оставлен для обратной совместимости"""
         angle = self._rng.uniform(0, 2 * np.pi)
         r_sq = self._rng.uniform(self._reach_min ** 2, self._reach_max ** 2)
         r = np.sqrt(r_sq)
         return self._base + np.array([r * np.cos(angle), r * np.sin(angle)], dtype=np.float32)
 
-    def _get_state(self) -> np.ndarray:
-        return np.asarray(self.robot.obs(), dtype=np.float32)
+    def _is_target_valid(self, target: np.ndarray, ee_start: np.ndarray) -> bool:
+        """Проверяет, удовлетворяет ли цель всем ограничениям."""
+        # 1. Кинематическая достижимость (расстояние от базы)
+        dist_from_base = np.linalg.norm(target - self._base)
+        if dist_from_base < self._reach_min - 1e-6 or dist_from_base > self._reach_max + 1e-6:
+            return False
+
+        # 2. Не внутри препятствий
+        if self.obstacle_manager is not None:
+            for obs in self.obstacle_manager.obstacles:
+                dist_to_obs = np.linalg.norm(target - obs.position)
+                if dist_to_obs < obs.radius - 1e-6:
+                    return False
+
+        # 3. Минимальное расстояние от начального положения схвата
+        if self.env_cfg.min_target_distance_from_ee > 0:
+            dist_to_ee = np.linalg.norm(target - ee_start)
+            if dist_to_ee < self.env_cfg.min_target_distance_from_ee:
+                return False
+
+        # 4. Прямая видимость от базы до цели (опционально)
+        if self.env_cfg.target_line_of_sight and self.obstacle_manager is not None:
+            for obs in self.obstacle_manager.obstacles:
+                d = _point_to_segment_distance(obs.position, self._base, target)
+                if d < obs.radius - 1e-6:
+                    return False
+
+        return True
+
+    def _sample_valid_target(self, ee_start: np.ndarray, max_attempts: int = 1000) -> np.ndarray:
+        """Генерирует случайную цель, удовлетворяющую всем условиям."""
+        for _ in range(max_attempts):
+            angle = self._rng.uniform(0, 2 * np.pi)
+            r_sq = self._rng.uniform(self._reach_min ** 2, self._reach_max ** 2)
+            r = np.sqrt(r_sq)
+            candidate = self._base + np.array([r * np.cos(angle), r * np.sin(angle)], dtype=np.float32)
+            if self._is_target_valid(candidate, ee_start):
+                return candidate
+
+        # Если не удалось, возвращаем запасной вариант (ближайшую к базе точку в направлении 0°)
+        print("Warning: could not generate valid target after many attempts, using fallback")
+        fallback = self._base + np.array([self._reach_min * 0.5, 0.0], dtype=np.float32)
+        return fallback
+
+    def _get_state(self) -> State:
+        st = self.robot.obs()
+        st.ee_x = (st.ee_x - self._base[0]) / self._reach_max
+        st.ee_y = (st.ee_y - self._base[1]) / self._reach_max
+
+        dx = float(self.target[0] - self.robot.end_effector_xy()[0])
+        dy = float(self.target[1] - self.robot.end_effector_xy()[1])
+
+        if self.env_cfg.use_abs_dist:
+            dx, dy = abs(dx), abs(dy)
+
+        if self.env_cfg.normalize_dist:
+            s = float(self.env_cfg.dist_scale)
+            dx, dy = dx / s, dy / s
+
+        st.dist_x = dx
+        st.dist_y = dy 
+        return st
 
     def _compute_reward_and_done(self) -> Tuple[float, bool, Dict[str, Any]]:
         joints = self.robot.joints_xy()
