@@ -4,7 +4,8 @@ from typing import Tuple, Optional
 @dataclass(frozen=True)
 class RobotConfig:
     base_xy: Tuple[float, float] = (400, 400)
-    link_lengths: Tuple[float, float] = (100, 80)
+    #! num of DoFs is determined by this field
+    link_lengths: Tuple[float, ...] = (100, 80, 60) 
     wrap_angles: bool = True
     dtheta_max: Optional[float] = 0.1
 
@@ -46,7 +47,7 @@ class GUIConfig:
     sim_width: int = 800
     plot_update_every: int = 10
     pause_on_done_frames: int = 0
-    steps_per_frame: int = 10
+    steps_per_frame: int = 2
     steps_per_frame_no_sim: int = 500
     model_path: str = "policy/best_policy.pt"
     train_episodes: int = 5000

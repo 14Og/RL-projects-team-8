@@ -1,44 +1,30 @@
+import math
+
 import numpy as np
 
-from dataclasses import dataclass, field
 
-
-@dataclass
 class State:
-    sin_th1: float  # sin() for base joint
-    cos_th1: float  # cos() for base joint
-    sin_th2: float  # sin() for middle joint
-    cos_th2: float  # cos() for middle joint
-    sin_th3: float  # sin() for ee joint
-    cos_th3: float  # cos() for ee joint
-    ee_x: float  # ee (end-effector) x pos
-    ee_y: float  # ee y pos
-    dist_x: float = field(init=False)  # abs(target_x - ee_x)
-    dist_y: float = field(init=False)  # abs(target_y - ee_y)
-    lidar_j1: np.ndarray = field(init=False)  # Joint 1 lidar readings (16 rays)
-    lidar_j2: np.ndarray = field(init=False)  # Joint 2 lidar readings (16 rays)
-    lidar_j3: np.ndarray = field(init=False)  # Joint 3 lidar readings (16 rays)
+    """Robot observation.
 
-    def __array__(self, dtype = np.float32) -> np.ndarray:
-        return np.concatenate([
-            np.array(
-                [
-                    self.sin_th1,
-                    self.cos_th1,
-                    self.sin_th2,
-                    self.cos_th2,
-                    self.sin_th3,
-                    self.cos_th3,
-                    self.ee_x,
-                    self.ee_y,
-                    self.dist_x,
-                    self.dist_y,
-                ], dtype
-            ),
-            np.asarray(self.lidar_j1, dtype=dtype),
-            np.asarray(self.lidar_j2, dtype=dtype),
-            np.asarray(self.lidar_j3, dtype=dtype),
-        ])
+    Observation vector layout:
+        [sin(th1), cos(th1), ..., sin(thN), cos(thN), ee_x, ee_y, dist_x, dist_y, ray_0, ..., ray_M]
+    Total length: 2*n_dof + 4 + n_rays*n_lidars
+    """
+
+    def __init__(self, thetas: np.ndarray, ee_x: float, ee_y: float, rays: np.ndarray) -> None:
+        self.thetas = np.asarray(thetas, dtype=float)  # joint angles, shape (n_dof,)
+        self.ee_x: float = float(ee_x)
+        self.ee_y: float = float(ee_y)
+        self.dist_x: float = 0.0  # set by env after construction
+        self.dist_y: float = 0.0  # set by env after construction
+        self.lidar_rays: np.ndarray = rays
+
+    def __array__(self, dtype=np.float32) -> np.ndarray:
+        trig = np.array([[math.sin(t), math.cos(t)] for t in self.thetas], dtype=float).ravel()
+        tail = np.array([self.ee_x, self.ee_y, self.dist_x, self.dist_y], dtype=float)
+        rays = self.lidar_rays.ravel()
+        return np.concatenate([trig, tail, rays]).astype(dtype)
+
 
 
 if __name__ == "__main__":
