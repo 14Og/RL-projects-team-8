@@ -520,8 +520,7 @@ class Runner:
             print(
                 f"[train] ep {episode:>5}/{n}  "
                 f"reward={last_r:+.2f}  "
-                f"sr({win})={recent_sr:.3f}  "
-                f"entropy={last_ent:.3f}",
+                f"sr({win})={recent_sr:.3f}",
                 flush=True,
             )
         else:
