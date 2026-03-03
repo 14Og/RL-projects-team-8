@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 
 @dataclass(frozen=True)
 class RobotConfig:
@@ -15,6 +15,13 @@ class LidarConfig:
     lidar_midlinks: bool = False  # attach a lidar at each link midpoint
     num_rays: int = 8             # rays per lidar, uniformly spread over full 360°
     ray_maxlen_px: float = 100.0     # max cast distance; normalized hit distance in [0, 1]
+
+@dataclass
+class ObstacleConfig:
+    positions: List[List[int]] = [[100, 100], [200, 200]] 
+    radius: float = 50
+    random: bool = False
+    dynamic: bool = False
 
 @dataclass
 class ModelConfig:
