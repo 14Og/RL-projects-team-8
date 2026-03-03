@@ -25,7 +25,8 @@ class ObstacleConfig:
     
     positions: List[List[float]] = field(default_factory=_default_obs)
     radius: float = 50.0
-    random: bool = False   # TBD
+    jitter_radius: float = 40.0   # max displacement from base position each episode
+    random: bool = True   # jitter obstacle positions each episode
     dynamic: bool = False  # TBD
     
         
@@ -60,10 +61,9 @@ class RewardConfig:
     obstacle_danger_threshold: float = 0.15    # Lidar reading below this = danger zone
     obstacle_danger_penalty: float = 0.15      # Penalty scale per lidar in danger zone
     collision_penalty: float = 10.0            # Heavy penalty for actual collision
-    # Stagnation penalty — punish the robot for not making progress
+    # Stagnation — terminate episode if robot is not making progress
     stagnation_window: int = 15               # number of steps to check for progress
-    stagnation_thresh: float = 2.0            # min distance change over window to not be "stuck"
-    stagnation_penalty: float = 0.3           # penalty per step while stagnating (ramps up)
+    stagnation_thresh: float = 1.0            # mean |progress| per step below this = stuck
 
 @dataclass
 class EnvConfig:
@@ -71,7 +71,6 @@ class EnvConfig:
     randomize_target: bool = True
     target_thresh: float = 30.0
     max_steps: int = 200
-    stagnation_max: int = 40                  # terminate episode after this many stagnant steps
     forbid_link_target_intersection: bool = True
     target_point_radius: float = 1.0
     min_target_distance_from_ee: float = 0.0  # min dist from initial ee to sampled target

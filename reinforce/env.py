@@ -27,7 +27,7 @@ class Environment:
         self.rew_cfg = reward_cfg
         self.target = np.asarray(env_cfg.target_xy, dtype=np.float32)
 
-        self.obstacle_manager = ObstacleManager(obstacle_cfg)
+        self.obstacle_manager = ObstacleManager(obstacle_cfg, rng=np.random.default_rng(seed))
         self.robot = Robot(robot_cfg, lidar_cfg, self.obstacle_manager.obstacles, seed=seed)
         self.model = model
         self._rng = np.random.default_rng(seed)
@@ -55,7 +55,6 @@ class Environment:
 
         # Stagnation tracking
         self._dist_history: List[float] = []
-        self._stagnation_steps: int = 0
 
     def check_collision(self, joints: np.ndarray) -> bool:
         """Check if any robot link segment collides with any obstacle."""
@@ -72,6 +71,8 @@ class Environment:
     def reset_episode(self, *, train: bool = True, randomize_theta: bool = True) -> np.ndarray:
         self._train_mode = bool(train)
 
+        self.obstacle_manager.randomize()
+        self.robot.set_obstacles(self.obstacle_manager.obstacles)
         self.robot.reset(randomize=randomize_theta)
         ee_start = self.robot.end_effector_xy()
 
@@ -96,7 +97,6 @@ class Environment:
         self._curr_action = None
 
         self._dist_history.clear()
-        self._stagnation_steps = 0
 
         self._needs_reset = False
 
@@ -258,18 +258,15 @@ class Environment:
                 proximity = (1.0 - lidar_min / danger_threshold) ** 2
                 reward -= float(self.rew_cfg.obstacle_danger_penalty) * proximity
         
-        # 5. Stagnation penalty — punish freezing in place
-        win = self.rew_cfg.stagnation_window
+        # 5. Stagnation detection — terminate if mean |progress| over window < threshold
         self._dist_history.append(dist)
+        stagnation_done = False
+        win = self.rew_cfg.stagnation_window
         if len(self._dist_history) >= win:
-            dist_change = abs(self._dist_history[-win] - dist)
-            if dist_change < self.rew_cfg.stagnation_thresh:
-                self._stagnation_steps += 1
-                # Ramp up: the longer it stalls, the worse it gets
-                ramp = min(self._stagnation_steps / 10.0, 3.0)
-                reward -= self.rew_cfg.stagnation_penalty * ramp
-            else:
-                self._stagnation_steps = 0
+            dists = self._dist_history[-win:]
+            mean_progress = sum(abs(dists[i] - dists[i+1]) for i in range(len(dists)-1)) / (len(dists)-1)
+            if mean_progress < self.rew_cfg.stagnation_thresh:
+                stagnation_done = True
 
         # Check collision
         collision = self.check_collision(joints)
@@ -294,8 +291,7 @@ class Environment:
                 fail_reason = "link_target_intersection"
 
         timeout = self.steps >= int(self.env_cfg.max_steps)
-        stagnation_timeout = self._stagnation_steps >= self.env_cfg.stagnation_max
-        if stagnation_timeout:
+        if stagnation_done:
             fail = True
             fail_reason = fail_reason or "stagnation"
         done = goal_reached or fail or timeout

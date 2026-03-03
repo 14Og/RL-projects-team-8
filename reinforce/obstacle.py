@@ -21,16 +21,29 @@ class Obstacle:
 
 
 class ObstacleManager:
-    def __init__(self, cfg: ObstacleConfig) -> None:
-        if cfg.random:
-            raise NotImplementedError("Random obstacles TBD")
+    def __init__(self, cfg: ObstacleConfig, rng: np.random.Generator | None = None) -> None:
         if cfg.dynamic:
             raise NotImplementedError("Dynamic obstacles TBD")
 
+        self.cfg = cfg
+        self._rng = rng or np.random.default_rng()
+        self._base_positions = [np.asarray(pos, dtype=float) for pos in cfg.positions]
         self.obstacles: List[Obstacle] = [
-            Obstacle(center=np.asarray(pos, dtype=float), radius=cfg.radius)
-            for pos in cfg.positions
+            Obstacle(center=bp.copy(), radius=cfg.radius)
+            for bp in self._base_positions
         ]
+
+    def randomize(self) -> None:
+        """Jitter each obstacle around its base position within jitter_radius (only if cfg.random)."""
+        if not self.cfg.random:
+            return
+        jr = self.cfg.jitter_radius
+        if jr <= 0:
+            return
+        for obs, bp in zip(self.obstacles, self._base_positions):
+            angle = self._rng.uniform(0, 2 * np.pi)
+            r = jr * np.sqrt(self._rng.uniform())
+            obs.center = bp + np.array([r * np.cos(angle), r * np.sin(angle)])
 
     def get_render_data(self) -> List[Dict]:
         return [obs.describe() for obs in self.obstacles]
