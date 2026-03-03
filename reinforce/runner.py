@@ -296,7 +296,6 @@ class Runner:
             except Exception:
                 pass
 
-        n_subplots = 7 if mode == "train" else 3
         if self.pygame_renderer is not None:
             # Non-interactive Agg figure.  PygameRenderer will convert it to a
             # pygame surface on demand.
@@ -307,44 +306,47 @@ class Runner:
             plot_h = self.gui_cfg.window_size[1]
             self._fig = Figure(figsize=(plot_w / 100.0, plot_h / 100.0), dpi=100)
             FigureCanvasAgg(self._fig)  # attaches Agg canvas
-            if mode == "train":
-                self._axes = (
-                    self._fig.add_subplot(711),
-                    self._fig.add_subplot(712),
-                    self._fig.add_subplot(713),
-                    self._fig.add_subplot(714),
-                    self._fig.add_subplot(715),
-                    self._fig.add_subplot(716),
-                    self._fig.add_subplot(717),
-                )
-            else:
-                self._axes = (
-                    self._fig.add_subplot(311),
-                    self._fig.add_subplot(312),
-                    self._fig.add_subplot(313),
-                )
-            # Produce an initial (empty) surface so the window isn't blank.
-            self.pygame_renderer.notify_figure_updated(self._fig)
         else:
             # Interactive figure: shows a live window in scripts, or renders
             # inline in Jupyter notebooks.
             if not _is_notebook():
                 plt.ion()
-            self._fig, _axes = plt.subplots(n_subplots, 1, figsize=(10, 7 + 2 * (n_subplots - 3)))
-            if n_subplots == 1:
-                self._axes = (_axes,)  # type: ignore[assignment]
-            else:
-                self._axes = tuple(_axes)  # type: ignore[assignment]
+            self._fig = plt.figure(figsize=(14, 10))
+
+        if mode == "train":
+            # 4 rows × 2 cols; last row spans both columns for success rate
+            from matplotlib.gridspec import GridSpec
+            gs = GridSpec(4, 2, figure=self._fig, hspace=0.35, wspace=0.25)
+            self._axes = (
+                self._fig.add_subplot(gs[0, 0]),  # ax1: total reward
+                self._fig.add_subplot(gs[0, 1]),  # ax2: steps/episode
+                self._fig.add_subplot(gs[1, 0]),  # ax3: KL divergence
+                self._fig.add_subplot(gs[1, 1]),  # ax4: sigma
+                self._fig.add_subplot(gs[2, 0]),  # ax5: collision rate
+                self._fig.add_subplot(gs[2, 1]),  # ax6: entropy
+                self._fig.add_subplot(gs[3, :]),  # ax7: success rate (full width)
+            )
+        else:
+            self._axes = (
+                self._fig.add_subplot(311),
+                self._fig.add_subplot(312),
+                self._fig.add_subplot(313),
+            )
+
+        if self.pygame_renderer is not None:
+            # Produce an initial (empty) surface so the window isn't blank.
+            self.pygame_renderer.notify_figure_updated(self._fig)
+        else:
             if not _is_notebook():
                 plt.show(block=False)
 
-        self._fig.suptitle(f"{mode} metrics", fontsize=12)
-        self._fig.tight_layout(pad=1.5)
+        self._fig.suptitle(f"{mode} metrics", fontsize=12, y=0.99)
+        self._fig.tight_layout(pad=0.8, rect=[0, 0, 1, 0.97])
 
     def _update_live_plot(self, mode: str) -> None:
         """Redraw axes content, then push the update to the correct display backend."""
         self._draw_metrics(mode)
-        self._fig.tight_layout(pad=1.5)
+        self._fig.tight_layout(pad=0.8, rect=[0, 0, 1, 0.97])
 
         if self.pygame_renderer is not None:
             # Renderer caches a converted surface; it stays valid until the next
@@ -372,14 +374,9 @@ class Runner:
         
         if mode == "train":
             ax1, ax2, ax3, ax4, ax5, ax6, ax7 = self._axes
-            ax1.clear()
-            ax2.clear()
-            ax3.clear()
-            ax4.clear()
-            ax5.clear()
-            ax6.clear()
-            ax7.clear()
-            
+            for ax in self._axes:
+                ax.clear()
+
             m = self.model.get_train_metrics()
             r = np.asarray(m.get("total_reward", []), dtype=np.float32)
             s = np.asarray(m.get("success", []), dtype=np.float32)
@@ -391,62 +388,66 @@ class Runner:
             sigma1 = np.asarray(m.get("sigma_joint_1", []), dtype=np.float32)
             sigma2 = np.asarray(m.get("sigma_joint_2", []), dtype=np.float32)
 
+            # Row 0, Col 0: Total reward
             if r.size:
                 ax1.plot(*_downsample(r), alpha=0.3, lw=0.5, color="#2196F3")
                 ax1.plot(*_downsample(_running_mean(r, 10)), lw=1.8, color="#1565C0")
-            ax1.set_title("total reward (ma=10)")
+            ax1.set_title("total reward (ma=10)", fontsize=9)
             ax1.grid(True, alpha=0.3)
 
-            if s.size:
-                ax2.plot(*_downsample(_windowed_rate(s, self._win)), lw=1.8, color="#4CAF50")
-            ax2.set_ylim(-0.05, 1.05)
-            ax2.set_title(f"success rate (window={self._win})")
+            # Row 0, Col 1: Steps/episode
+            if steps.size:
+                ax2.plot(*_downsample(steps), alpha=0.3, lw=0.5, color="#FF9800")
+                ax2.plot(*_downsample(_running_mean(steps, 10)), lw=1.8, color="#E65100")
+            ax2.set_title("steps / episode (ma=10)", fontsize=9)
             ax2.grid(True, alpha=0.3)
 
-            if steps.size:
-                ax3.plot(*_downsample(steps), alpha=0.3, lw=0.5, color="#FF9800")
-                ax3.plot(*_downsample(_running_mean(steps, 10)), lw=1.8, color="#E65100")
-            ax3.set_title("steps / episode (ma=10)")
-            ax3.grid(True, alpha=0.3)
-            
-            # KL divergence
+            # Row 1, Col 0: KL divergence
             if kl.size:
                 valid_kl = kl[~np.isnan(kl)]
                 if valid_kl.size > 0:
-                    ax4.plot(*_downsample(valid_kl), alpha=0.3, lw=0.5, color="#9C27B0")
-                    ax4.plot(*_downsample(_running_mean(valid_kl, 10)), lw=1.8, color="#6A1B9A")
-            ax4.set_title("KL divergence (ma=10)")
-            ax4.grid(True, alpha=0.3)
-            
-            # Sigma values for all joints on one plot
+                    ax3.plot(*_downsample(valid_kl), alpha=0.3, lw=0.5, color="#9C27B0")
+                    ax3.plot(*_downsample(_running_mean(valid_kl, 10)), lw=1.8, color="#6A1B9A")
+            ax3.set_title("KL divergence (ma=10)", fontsize=9)
+            ax3.grid(True, alpha=0.3)
+
+            # Row 1, Col 1: Sigma (all joints)
             if sigma0.size:
                 valid_sigma0 = sigma0[~np.isnan(sigma0)]
                 if valid_sigma0.size > 0:
-                    ax5.plot(*_downsample(valid_sigma0), lw=1.2, color="#FF5252", label="joint_0", alpha=0.8)
+                    ax4.plot(*_downsample(valid_sigma0), lw=1.2, color="#FF5252", label="joint_0", alpha=0.8)
             if sigma1.size:
                 valid_sigma1 = sigma1[~np.isnan(sigma1)]
                 if valid_sigma1.size > 0:
-                    ax5.plot(*_downsample(valid_sigma1), lw=1.2, color="#2196F3", label="joint_1", alpha=0.8)
+                    ax4.plot(*_downsample(valid_sigma1), lw=1.2, color="#2196F3", label="joint_1", alpha=0.8)
             if sigma2.size:
                 valid_sigma2 = sigma2[~np.isnan(sigma2)]
                 if valid_sigma2.size > 0:
-                    ax5.plot(*_downsample(valid_sigma2), lw=1.2, color="#4CAF50", label="joint_2", alpha=0.8)
-            ax5.set_title("sigma (policy std)")
-            ax5.legend(fontsize=8, loc="best")
-            ax5.grid(True, alpha=0.3)
-            
-            # Collision rate
+                    ax4.plot(*_downsample(valid_sigma2), lw=1.2, color="#4CAF50", label="joint_2", alpha=0.8)
+            ax4.set_title("sigma (policy std)", fontsize=9)
+            ax4.legend(fontsize=7, loc="best")
+            ax4.grid(True, alpha=0.3)
+
+            # Row 2, Col 0: Collision rate
             if c.size:
-                ax6.plot(*_downsample(_windowed_rate(c, self._win)), lw=1.8, color="#F44336")
-            ax6.set_ylim(-0.05, 1.05)
-            ax6.set_title(f"collision rate (window={self._win})")
-            ax6.grid(True, alpha=0.3)
-            
-            # Entropy (policy exploration)
+                ax5.plot(*_downsample(_windowed_rate(c, self._win)), lw=1.8, color="#F44336")
+            ax5.set_ylim(-0.05, 1.05)
+            ax5.set_title(f"collision rate (window={self._win})", fontsize=9)
+            ax5.grid(True, alpha=0.3)
+
+            # Row 2, Col 1: Entropy
             if entropy.size:
-                ax7.plot(*_downsample(entropy), alpha=0.3, lw=0.5, color="#607D8B")
-                ax7.plot(*_downsample(_running_mean(entropy, 10)), lw=1.8, color="#455A64")
-            ax7.set_title("entropy (ma=10)")
+                ax6.plot(*_downsample(entropy), alpha=0.3, lw=0.5, color="#607D8B")
+                ax6.plot(*_downsample(_running_mean(entropy, 10)), lw=1.8, color="#455A64")
+            ax6.set_title("entropy (ma=10)", fontsize=9)
+            ax6.grid(True, alpha=0.3)
+
+            # Row 3, full width: Success rate
+            if s.size:
+                ax7.plot(*_downsample(_windowed_rate(s, self._win)), lw=2.0, color="#4CAF50")
+            ax7.set_ylim(-0.05, 1.05)
+            ax7.set_title(f"success rate (window={self._win})", fontsize=10, fontweight="bold")
+            ax7.set_xlabel("episode")
             ax7.grid(True, alpha=0.3)
 
         else:  # test

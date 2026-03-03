@@ -39,15 +39,17 @@ class ModelConfig:
     hidden_sizes: Tuple[int, ...] = (256, 128)
     log_std_min: float = -3.0
     log_std_max: float = -0.5
-    entropy_coef: float = 0.1             # weight for entropy bonus in PPO loss
+
 @dataclass
 class RewardConfig:
     progress_scale: float = 0.03
+    progress_near_boost: float = 4.0     # extra multiplier when ee is within boost_radius of target
+    progress_boost_radius: float = 80.0  # px – distance at which boost starts ramping up
     step_penalty: float = 0.02
     goal_reward: float = 50.0
     fail_penalty: float = 15.0
-    joint_velocity_scale: float = 1       # penalty on squared joint velocity
-    action_delta_scale: float = 1           # penalty on squared change in action
+    joint_velocity_scale: float = 0.1     # penalty on squared joint velocity
+    action_delta_scale: float = 0.1       # penalty on squared change in action
     # Lidar-based obstacle avoidance rewards
     obstacle_safety_scale: float = 0.02      # Reward for maintaining distance from obstacles
     obstacle_danger_threshold: float = 0.2    # Lidar reading < 0.3 = danger zone

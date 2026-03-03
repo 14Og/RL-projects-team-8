@@ -219,15 +219,22 @@ class Environment:
         progress = float(self._prev_dist - dist)
         reward = float(self.rew_cfg.progress_scale) * progress - float(self.rew_cfg.step_penalty)
 
+        # 1b. Distance-adaptive progress boost — amplify signal near the goal
+        if dist < self.rew_cfg.progress_boost_radius:
+            boost = 1.0 + self.rew_cfg.progress_near_boost * (
+                1.0 - dist / self.rew_cfg.progress_boost_radius
+            )
+            reward += float(self.rew_cfg.progress_scale) * progress * (boost - 1.0)
+
         # 2. Joint velocity penalty (squared velocities)
         if self._curr_action is not None and self.rew_cfg.joint_velocity_scale != 0.0:
-            vel_sq = float(np.sum(np.square(self._curr_action)))
+            vel_sq = float(np.dot(self._curr_action, self._curr_action))
             reward -= float(self.rew_cfg.joint_velocity_scale) * vel_sq
 
         # 3. Action delta / smoothness penalty
         if self._curr_action is not None and self._prev_action is not None and self.rew_cfg.action_delta_scale != 0.0:
             delta_a = self._curr_action - self._prev_action
-            accel_sq = float(np.sum(np.square(delta_a)))
+            accel_sq = float(np.dot(delta_a, delta_a))
             reward -= float(self.rew_cfg.action_delta_scale) * accel_sq
 
         # 4. Lidar-based obstacle avoidance reward
