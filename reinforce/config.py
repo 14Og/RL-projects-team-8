@@ -63,7 +63,7 @@ class RewardConfig:
     # Stagnation penalty — punish the robot for not making progress
     stagnation_window: int = 15               # number of steps to check for progress
     stagnation_thresh: float = 2.0            # min distance change over window to not be "stuck"
-    stagnation_penalty: float = 0.05           # penalty per step while stagnating (ramps up)
+    stagnation_penalty: float = 0.3           # penalty per step while stagnating (ramps up)
 
 @dataclass
 class EnvConfig:
