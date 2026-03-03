@@ -235,69 +235,84 @@ class Model:
         b_log_probs = torch.stack(self.buffer_log_probs).detach().to(self.device) # [Batch]
         b_returns = torch.tensor(self.buffer_rewards, dtype=torch.float32).to(self.device) # [Batch]
 
-        # 2. Считаем Advantage
-        # Вместо одного числа (бейзлайна), мы вычитаем среднее по всему батчу и нормализуем
-        # Это делает обучение на порядок стабильнее
+        # 2. Считаем Advantage (normalised across the full batch)
         with torch.no_grad():
             advantages = (b_returns - b_returns.mean()) / (b_returns.std() + 1e-8)
+
+        batch_size = b_states.shape[0]
+        mbs = min(self.cfg.mini_batch_size, batch_size)
+        eps = self.cfg.clip_epsilon
 
         epoch_losses = []
         epoch_kls = []
         grad_norms = []
         epoch_entropies = []
-        final_sigmas = None 
+        final_sigmas = None
 
-        # 3. training loop (PPO Epochs) with entropy bonus & KL early stopping
-        for _ in range(self.cfg.ppo_epochs): 
-            mu, sigma = self.policy(b_states)
-            dist = Normal(mu, sigma)
-            
-            new_log_probs = dist.log_prob(b_actions).sum(dim=-1)
-            
-            log_ratio = new_log_probs - b_log_probs
-            ratio = torch.exp(log_ratio)
-
+        # 3. PPO epochs with mini-batch shuffling & KL early stopping
+        for _ in range(self.cfg.ppo_epochs):
+            # Check KL on full batch BEFORE doing any mini-batch updates this epoch
             with torch.no_grad():
-                approx_kl = ((ratio - 1) - log_ratio).mean().item()
+                mu_full, sigma_full = self.policy(b_states)
+                dist_full = Normal(mu_full, sigma_full)
+                new_lp_full = dist_full.log_prob(b_actions).sum(dim=-1)
+                log_ratio_full = new_lp_full - b_log_probs
+                ratio_full = torch.exp(log_ratio_full)
+                approx_kl = ((ratio_full - 1) - log_ratio_full).mean().item()
                 epoch_kls.append(approx_kl)
+                final_sigmas = sigma_full.mean(dim=0).cpu().numpy()
+                epoch_entropies.append(dist_full.entropy().sum(dim=-1).mean().item())
 
-            # KL early stopping — prevent destructive updates
             if approx_kl > self.cfg.target_kl:
                 break
 
-            # PPO Clip Objective
-            eps = 0.2
-            surr1 = ratio * advantages
-            surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * advantages
-            policy_loss = -torch.min(surr1, surr2).mean()
+            # Shuffle and iterate in mini-batches
+            indices = torch.randperm(batch_size, device=self.device)
+            for start in range(0, batch_size, mbs):
+                mb_idx = indices[start : start + mbs]
+                mb_states = b_states[mb_idx]
+                mb_actions = b_actions[mb_idx]
+                mb_log_probs = b_log_probs[mb_idx]
+                mb_advantages = advantages[mb_idx]
 
-            # Entropy bonus — encourage exploration
-            entropy = dist.entropy().sum(dim=-1).mean()
-            loss = policy_loss - self.cfg.entropy_coef * entropy
+                mu, sigma = self.policy(mb_states)
+                dist = Normal(mu, sigma)
+                new_log_probs = dist.log_prob(mb_actions).sum(dim=-1)
 
-            self.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.cfg.grad_clip_norm)
-            self.optimizer.step()
+                log_ratio = new_log_probs - mb_log_probs
+                ratio = torch.exp(log_ratio)
 
-            epoch_losses.append(loss.item())
-            grad_norms.append(grad_norm.item() if hasattr(grad_norm, "item") else grad_norm)
-            epoch_entropies.append(entropy.item())
-            sigmas_per_joint = sigma.detach().mean(dim=0).cpu().numpy() 
+                # PPO Clip Objective
+                surr1 = ratio * mb_advantages
+                surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * mb_advantages
+                policy_loss = -torch.min(surr1, surr2).mean()
+
+                # Entropy bonus
+                entropy = dist.entropy().sum(dim=-1).mean()
+                loss = policy_loss - self.cfg.entropy_coef * entropy
+
+                self.optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.cfg.grad_clip_norm)
+                self.optimizer.step()
+
+                epoch_losses.append(loss.item())
+                grad_norms.append(grad_norm.item() if hasattr(grad_norm, "item") else grad_norm)
 
         self.scheduler.step()
 
+        sigmas_per_joint = final_sigmas if final_sigmas is not None else np.zeros(3)
         res = {
-            "loss": float(np.mean(epoch_losses)),
-            "grad_norm": float(np.mean(grad_norms)),
-            "kl_div": float(np.mean(epoch_kls)),
+            "loss": float(np.mean(epoch_losses)) if epoch_losses else float("nan"),
+            "grad_norm": float(np.mean(grad_norms)) if grad_norms else float("nan"),
+            "kl_div": float(np.mean(epoch_kls)) if epoch_kls else float("nan"),
             "sigma_mean": float(sigmas_per_joint.mean()),
             "sigma_joint_0": float(sigmas_per_joint[0]),
             "sigma_joint_1": float(sigmas_per_joint[1]),
             "sigma_joint_2": float(sigmas_per_joint[2]),
             "entropy": float(np.mean(epoch_entropies)) if epoch_entropies else float("nan"),
         }
-        
+
         return res
     
     def record_test_episode(self, *, success: bool, final_distance: float, steps: int) -> None:

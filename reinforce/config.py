@@ -31,17 +31,19 @@ class ObstacleConfig:
         
 @dataclass
 class ModelConfig:
-    gamma: float = 0.99
-    lr_start: float = 1e-3
+    gamma: float = 0.97
+    lr_start: float = 3e-4
     lr_min: float = 1e-5
     baseline_buf_len: int = 200
     grad_clip_norm: float = 1.0
-    hidden_sizes: Tuple[int, ...] = (256, 256)
+    hidden_sizes: Tuple[int, ...] = (256, 128)
     log_std_min: float = -2.0
     log_std_max: float = 0.5
     entropy_coef: float = 0.01            # entropy bonus coefficient
     target_kl: float = 0.015              # KL early stopping threshold
+    clip_epsilon: float = 0.15            # PPO clip range
     ppo_epochs: int = 10                  # max PPO epochs per update
+    mini_batch_size: int = 256            # mini-batch size within each PPO epoch
     n_ppo_updates: int = 500              # expected total PPO updates (for LR scheduler)
 
 @dataclass
