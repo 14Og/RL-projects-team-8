@@ -215,16 +215,43 @@ class Environment:
         ee = joints[-1]
         dist = float(np.linalg.norm(ee - self.target))
 
+        # 1. Base reward for approaching the target and step penalty
         progress = float(self._prev_dist - dist)
         reward = float(self.rew_cfg.progress_scale) * progress - float(self.rew_cfg.step_penalty)
-        
-        a_t = self._curr_action
-        if a_t is not None and self.rew_cfg.action_l2_scale != 0.0:
-            reward -= self.rew_cfg.action_l2_scale * np.linalg.norm(a_t, a_t)
 
-        if a_t is not None and self._prev_action is not None and self.rew_cfg.action_delta_scale != 0.0:
-            da = a_t - self._prev_action
-            reward -= self.rew_cfg.action_delta_scale * np.linalg.norm(da, da)
+        # 2. Joint velocity penalty (squared velocities)
+        if self._curr_action is not None and self.rew_cfg.joint_velocity_scale != 0.0:
+            vel_sq = float(np.sum(np.square(self._curr_action)))
+            reward -= float(self.rew_cfg.joint_velocity_scale) * vel_sq
+
+        # 3. Action delta / smoothness penalty
+        if self._curr_action is not None and self._prev_action is not None and self.rew_cfg.action_delta_scale != 0.0:
+            delta_a = self._curr_action - self._prev_action
+            accel_sq = float(np.sum(np.square(delta_a)))
+            reward -= float(self.rew_cfg.action_delta_scale) * accel_sq
+
+        # 4. Lidar-based obstacle avoidance reward
+        mgr = self.robot.lidar_manager
+        if mgr.n_lidars > 0:
+            # Get all lidar readings and find the minimum (closest obstacle)
+            all_readings = []
+            for lidar in mgr.lidars:
+                readings = lidar.scan(mgr._obstacles)
+                all_readings.extend(readings)
+            all_readings = np.array(all_readings)
+            
+            if len(all_readings) > 0:
+                min_lidar = float(np.min(all_readings))
+                
+                # Reward for maintaining safe distance (min_lidar close to 1.0 = far from obstacles)
+                safe_distance_reward = float(self.rew_cfg.obstacle_safety_scale) * min_lidar
+                reward += safe_distance_reward
+                
+                # Penalty for getting too close (danger zone)
+                danger_threshold = float(self.rew_cfg.obstacle_danger_threshold)
+                if min_lidar < danger_threshold:
+                    danger_penalty = float(self.rew_cfg.obstacle_danger_penalty) * (danger_threshold - min_lidar)
+                    reward -= danger_penalty
         
         # Check collision
         collision = self.check_collision(joints)
@@ -232,6 +259,8 @@ class Environment:
         if collision:
             fail = True
             fail_reason = "collision"
+            # Heavy penalty for collision
+            reward -= float(self.rew_cfg.collision_penalty)
         else:
             fail = False
             

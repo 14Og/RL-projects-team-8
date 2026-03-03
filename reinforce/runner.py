@@ -296,6 +296,7 @@ class Runner:
             except Exception:
                 pass
 
+        n_subplots = 7 if mode == "train" else 3
         if self.pygame_renderer is not None:
             # Non-interactive Agg figure.  PygameRenderer will convert it to a
             # pygame surface on demand.
@@ -306,11 +307,22 @@ class Runner:
             plot_h = self.gui_cfg.window_size[1]
             self._fig = Figure(figsize=(plot_w / 100.0, plot_h / 100.0), dpi=100)
             FigureCanvasAgg(self._fig)  # attaches Agg canvas
-            self._axes = (
-                self._fig.add_subplot(311),
-                self._fig.add_subplot(312),
-                self._fig.add_subplot(313),
-            )
+            if mode == "train":
+                self._axes = (
+                    self._fig.add_subplot(711),
+                    self._fig.add_subplot(712),
+                    self._fig.add_subplot(713),
+                    self._fig.add_subplot(714),
+                    self._fig.add_subplot(715),
+                    self._fig.add_subplot(716),
+                    self._fig.add_subplot(717),
+                )
+            else:
+                self._axes = (
+                    self._fig.add_subplot(311),
+                    self._fig.add_subplot(312),
+                    self._fig.add_subplot(313),
+                )
             # Produce an initial (empty) surface so the window isn't blank.
             self.pygame_renderer.notify_figure_updated(self._fig)
         else:
@@ -318,8 +330,11 @@ class Runner:
             # inline in Jupyter notebooks.
             if not _is_notebook():
                 plt.ion()
-            self._fig, _axes = plt.subplots(3, 1, figsize=(10, 7))
-            self._axes = tuple(_axes)  # type: ignore[assignment]
+            self._fig, _axes = plt.subplots(n_subplots, 1, figsize=(10, 7 + 2 * (n_subplots - 3)))
+            if n_subplots == 1:
+                self._axes = (_axes,)  # type: ignore[assignment]
+            else:
+                self._axes = tuple(_axes)  # type: ignore[assignment]
             if not _is_notebook():
                 plt.show(block=False)
 
@@ -352,18 +367,29 @@ class Runner:
             plt.pause(0.001)
 
     def _draw_metrics(self, mode: str) -> None:
-        """Clear and redraw the three axes from current model metrics."""
+        """Clear and redraw the axes from current model metrics."""
         assert self._axes is not None
-        ax1, ax2, ax3 = self._axes
-        ax1.clear()
-        ax2.clear()
-        ax3.clear()
-
+        
         if mode == "train":
+            ax1, ax2, ax3, ax4, ax5, ax6, ax7 = self._axes
+            ax1.clear()
+            ax2.clear()
+            ax3.clear()
+            ax4.clear()
+            ax5.clear()
+            ax6.clear()
+            ax7.clear()
+            
             m = self.model.get_train_metrics()
             r = np.asarray(m.get("total_reward", []), dtype=np.float32)
             s = np.asarray(m.get("success", []), dtype=np.float32)
+            c = np.asarray(m.get("collision", []), dtype=np.float32)
             steps = np.asarray(m.get("steps", []), dtype=np.float32)
+            kl = np.asarray(m.get("kl_div", []), dtype=np.float32)
+            entropy = np.asarray(m.get("entropy", []), dtype=np.float32)
+            sigma0 = np.asarray(m.get("sigma_joint_0", []), dtype=np.float32)
+            sigma1 = np.asarray(m.get("sigma_joint_1", []), dtype=np.float32)
+            sigma2 = np.asarray(m.get("sigma_joint_2", []), dtype=np.float32)
 
             if r.size:
                 ax1.plot(*_downsample(r), alpha=0.3, lw=0.5, color="#2196F3")
@@ -382,8 +408,53 @@ class Runner:
                 ax3.plot(*_downsample(_running_mean(steps, 10)), lw=1.8, color="#E65100")
             ax3.set_title("steps / episode (ma=10)")
             ax3.grid(True, alpha=0.3)
+            
+            # KL divergence
+            if kl.size:
+                valid_kl = kl[~np.isnan(kl)]
+                if valid_kl.size > 0:
+                    ax4.plot(*_downsample(valid_kl), alpha=0.3, lw=0.5, color="#9C27B0")
+                    ax4.plot(*_downsample(_running_mean(valid_kl, 10)), lw=1.8, color="#6A1B9A")
+            ax4.set_title("KL divergence (ma=10)")
+            ax4.grid(True, alpha=0.3)
+            
+            # Sigma values for all joints on one plot
+            if sigma0.size:
+                valid_sigma0 = sigma0[~np.isnan(sigma0)]
+                if valid_sigma0.size > 0:
+                    ax5.plot(*_downsample(valid_sigma0), lw=1.2, color="#FF5252", label="joint_0", alpha=0.8)
+            if sigma1.size:
+                valid_sigma1 = sigma1[~np.isnan(sigma1)]
+                if valid_sigma1.size > 0:
+                    ax5.plot(*_downsample(valid_sigma1), lw=1.2, color="#2196F3", label="joint_1", alpha=0.8)
+            if sigma2.size:
+                valid_sigma2 = sigma2[~np.isnan(sigma2)]
+                if valid_sigma2.size > 0:
+                    ax5.plot(*_downsample(valid_sigma2), lw=1.2, color="#4CAF50", label="joint_2", alpha=0.8)
+            ax5.set_title("sigma (policy std)")
+            ax5.legend(fontsize=8, loc="best")
+            ax5.grid(True, alpha=0.3)
+            
+            # Collision rate
+            if c.size:
+                ax6.plot(*_downsample(_windowed_rate(c, self._win)), lw=1.8, color="#F44336")
+            ax6.set_ylim(-0.05, 1.05)
+            ax6.set_title(f"collision rate (window={self._win})")
+            ax6.grid(True, alpha=0.3)
+            
+            # Entropy (policy exploration)
+            if entropy.size:
+                ax7.plot(*_downsample(entropy), alpha=0.3, lw=0.5, color="#607D8B")
+                ax7.plot(*_downsample(_running_mean(entropy, 10)), lw=1.8, color="#455A64")
+            ax7.set_title("entropy (ma=10)")
+            ax7.grid(True, alpha=0.3)
 
         else:  # test
+            ax1, ax2, ax3 = self._axes
+            ax1.clear()
+            ax2.clear()
+            ax3.clear()
+            
             m = self.model.get_test_metrics()
             s = np.asarray(m.get("success", []), dtype=np.float32)
             dist = np.asarray(m.get("final_distance", []), dtype=np.float32)
@@ -443,10 +514,13 @@ class Runner:
             win = min(self._win, len(sr))
             recent_sr = float(np.mean(sr[-win:])) if win else 0.0
             last_r = rewards[-1] if rewards else float("nan")
+            ent = m.get("entropy", [])
+            last_ent = ent[-1] if ent else float("nan")
             print(
                 f"[train] ep {episode:>5}/{n}  "
                 f"reward={last_r:+.2f}  "
-                f"success_rate({win})={recent_sr:.3f}",
+                f"sr({win})={recent_sr:.3f}  "
+                f"entropy={last_ent:.3f}",
                 flush=True,
             )
         else:

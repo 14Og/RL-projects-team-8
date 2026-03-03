@@ -110,6 +110,28 @@ class PygameRenderer:
         )
         self.screen.blit(self.font.render(hud, True, (20, 20, 20)), (10, 10))
 
+        # ---- Lidar values display -------------------------------------------------------
+        lidar_data = render_data.get("lidar", [])
+        y_offset = 35
+        for i, lidar_info in enumerate(lidar_data):
+            pos = lidar_info.get("position", np.zeros(2))
+            readings = lidar_info.get("readings", np.array([]))
+            
+            # Display lidar position and summary stats
+            if len(readings) > 0:
+                min_reading = float(np.min(readings))
+                max_reading = float(np.max(readings))
+                avg_reading = float(np.mean(readings))
+                lidar_text = (
+                    f"Lidar {i}: pos=({pos[0]:.1f},{pos[1]:.1f})  "
+                    f"min={min_reading:.3f} max={max_reading:.3f} avg={avg_reading:.3f}"
+                )
+            else:
+                lidar_text = f"Lidar {i}: pos=({pos[0]:.1f},{pos[1]:.1f})  (no readings)"
+            
+            self.screen.blit(self.font.render(lidar_text, True, (60, 60, 60)), (10, y_offset))
+            y_offset += 25
+
         pygame.display.flip()
 
         if mode == "test":

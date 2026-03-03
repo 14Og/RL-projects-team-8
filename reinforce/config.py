@@ -7,7 +7,7 @@ class RobotConfig:
     #! num of DoFs is determined by this field
     link_lengths: Tuple[float, ...] = (100, 80, 60) 
     wrap_angles: bool = True
-    dtheta_max: Optional[float] = 0.1
+    dtheta_max: Optional[float] = 0.3
 
 @dataclass(frozen=True)
 class LidarConfig:
@@ -21,7 +21,7 @@ class ObstacleConfig:
         
     @staticmethod
     def _default_obs() -> List:
-        return [[250, 400], [550, 400]]
+        return [[200, 400], [600, 400]]
     
     positions: List[List[float]] = field(default_factory=_default_obs)
     radius: float = 60.0
@@ -29,33 +29,37 @@ class ObstacleConfig:
     dynamic: bool = False  # TBD
     
         
-
 @dataclass
 class ModelConfig:
     gamma: float = 0.99
-    lr_start: float = 1e-4
+    lr_start: float = 1e-3
     lr_min: float = 1e-5
     baseline_buf_len: int = 200
     grad_clip_norm: float = 1.0
-    hidden_sizes: Tuple[int, ...] = (128, 128)
+    hidden_sizes: Tuple[int, ...] = (256, 128)
     log_std_min: float = -3.0
     log_std_max: float = -0.5
-
+    entropy_coef: float = 0.1             # weight for entropy bonus in PPO loss
 @dataclass
 class RewardConfig:
     progress_scale: float = 0.03
-    step_penalty: float = 0.01
-    goal_reward: float = 15.0
-    fail_penalty: float = 5.0
-    action_l2_scale: float = 0.0
-    action_delta_scale: float = 0.0
+    step_penalty: float = 0.02
+    goal_reward: float = 50.0
+    fail_penalty: float = 15.0
+    joint_velocity_scale: float = 1       # penalty on squared joint velocity
+    action_delta_scale: float = 1           # penalty on squared change in action
+    # Lidar-based obstacle avoidance rewards
+    obstacle_safety_scale: float = 0.02      # Reward for maintaining distance from obstacles
+    obstacle_danger_threshold: float = 0.2    # Lidar reading < 0.3 = danger zone
+    obstacle_danger_penalty: float = 0.5      # Penalty scale for being in danger zone
+    collision_penalty: float = 25.0            # Heavy penalty for actual collision
 
 @dataclass
 class EnvConfig:
     target_xy: Tuple[float, float] = (250, 300.0)
     randomize_target: bool = True
     target_thresh: float = 30.0
-    max_steps: int = 200
+    max_steps: int = 300
     forbid_link_target_intersection: bool = True
     target_point_radius: float = 1.0
     min_target_distance_from_ee: float = 0.0  # min dist from initial ee to sampled target
