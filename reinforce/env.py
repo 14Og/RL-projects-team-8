@@ -52,6 +52,10 @@ class Environment:
         self._prev_action = None
         self._curr_action = None
 
+        # Stagnation tracking
+        self._dist_history: List[float] = []
+        self._stagnation_steps: int = 0
+
     def check_collision(self, joints: np.ndarray) -> bool:
         """Check if any robot link segment collides with any obstacle."""
         for obs in self.obstacle_manager.obstacles:
@@ -89,6 +93,9 @@ class Environment:
         
         self._prev_action = None
         self._curr_action = None
+
+        self._dist_history.clear()
+        self._stagnation_steps = 0
 
         self._needs_reset = False
 
@@ -260,6 +267,19 @@ class Environment:
                     danger_penalty = float(self.rew_cfg.obstacle_danger_penalty) * (danger_threshold - min_lidar)
                     reward -= danger_penalty
         
+        # 5. Stagnation penalty — punish freezing in place
+        win = self.rew_cfg.stagnation_window
+        self._dist_history.append(dist)
+        if len(self._dist_history) >= win:
+            dist_change = abs(self._dist_history[-win] - dist)
+            if dist_change < self.rew_cfg.stagnation_thresh:
+                self._stagnation_steps += 1
+                # Ramp up: the longer it stalls, the worse it gets
+                ramp = min(self._stagnation_steps / 10.0, 3.0)
+                reward -= self.rew_cfg.stagnation_penalty * ramp
+            else:
+                self._stagnation_steps = 0
+
         # Check collision
         collision = self.check_collision(joints)
         fail_reason = ""
@@ -283,6 +303,10 @@ class Environment:
                 fail_reason = "link_target_intersection"
 
         timeout = self.steps >= int(self.env_cfg.max_steps)
+        stagnation_timeout = self._stagnation_steps >= self.env_cfg.stagnation_max
+        if stagnation_timeout:
+            fail = True
+            fail_reason = fail_reason or "stagnation"
         done = goal_reached or fail or timeout
 
         info: Dict[str, Any] = {
