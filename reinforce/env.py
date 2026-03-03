@@ -36,7 +36,7 @@ class Environment:
         links = np.asarray(robot_cfg.link_lengths, dtype=float)
         self._base = base
         self._reach_max = float(np.sum(links))
-        self._reach_min = float(max(links[0] * 0.4, links[0] - np.sum(links[1:])))
+        self._reach_min = float(max(links[0] * 0.8, links[0] - np.sum(links[1:])))
 
         self._collision_threshold: float = 0.05
 

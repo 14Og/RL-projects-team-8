@@ -311,7 +311,7 @@ class Runner:
             # inline in Jupyter notebooks.
             if not _is_notebook():
                 plt.ion()
-            self._fig = plt.figure(figsize=(14, 10))
+            self._fig = plt.figure(figsize=(12, 12))
 
         if mode == "train":
             # 4 rows × 2 cols; last row spans both columns for success rate

@@ -36,9 +36,9 @@ class ModelConfig:
     lr_min: float = 1e-5
     baseline_buf_len: int = 200
     grad_clip_norm: float = 1.0
-    hidden_sizes: Tuple[int, ...] = (256, 256, 128)
+    hidden_sizes: Tuple[int, ...] = (256, 256)
     log_std_min: float = -2.0
-    log_std_max: float = 0
+    log_std_max: float = 0.5
     entropy_coef: float = 0.01            # entropy bonus coefficient
     target_kl: float = 0.02               # KL early stopping threshold
     ppo_epochs: int = 10                  # max PPO epochs per update
@@ -47,7 +47,7 @@ class ModelConfig:
 @dataclass
 class RewardConfig:
     progress_scale: float = 0.03
-    progress_near_boost: float = 6.0     # extra multiplier when ee is within boost_radius of target
+    progress_near_boost: float = 10.0     # extra multiplier when ee is within boost_radius of target
     progress_boost_radius: float = 100.0  # px – distance at which boost starts ramping up
     step_penalty: float = 0.02
     goal_reward: float = 50.0
@@ -79,10 +79,10 @@ class EnvConfig:
 class GUIConfig:
     window_size: Tuple[int, int] = (2000, 1200)
     sim_width: int = 800
-    plot_update_every: int = 10
+    plot_update_every: int = 50
     pause_on_done_frames: int = 0
-    steps_per_frame: int = 5
-    steps_per_frame_no_sim: int = 500
+    steps_per_frame: int = 10
+    steps_per_frame_no_sim: int = 200
     model_path: str = "policy/best_policy.pt"
     train_episodes: int = 5000
     test_episodes: int = 300
