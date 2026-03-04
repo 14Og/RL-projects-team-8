@@ -129,7 +129,7 @@ Instead of updating after each episode, PPO accumulates a buffer of at least 204
 
 For the same batch of transitions, actions are re-evaluated under the **current** policy to compute the clipped surrogate loss. Let $\hat{A}_t$ denote the advantage estimate (batch-normalized returns) and $\epsilon = 0.15$ the clip coefficient:
 
-$$\mathcal{L}^{\text{CLIP}} = -\mathbb{E}_t \left[ \min\left(\frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)} \hat{A}_t,\ \text{clip}\left(\frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)}, 1 - \epsilon, 1 + \epsilon\right) \hat{A}_t\right) \right]$$
+$$\mathcal{L}^{\text{CLIP}} = -\mathbb{E}_{t\sim \mathrm{Uniform}[0, T_b - 1]} \left[ \min\left(\frac{\pi_\theta(A_t \mid S_t)}{\pi_{\theta_{\text{old}}}(A_t \mid S_t)} \hat{A}_t,\ \text{clip}\left(\frac{\pi_\theta(A_t \mid S_t)}{\pi_{\theta_{\text{old}}}(A_t \mid S_t)}, 1 - \epsilon, 1 + \epsilon\right) \hat{A}_t\right) \right]$$
 
 The clipping prevents the probability ratio from deviating too far from $1$, limiting destructively large policy updates.
 
@@ -141,7 +141,7 @@ $$\mathcal{L} = \mathcal{L}^{\text{CLIP}} - c_{\text{ent}} \cdot H[\pi_\theta]$$
 
 Before each epoch, the approximate KL divergence between old and new policies is computed:
 
-$$D_{\text{KL}}^{\text{approx}} = \mathbb{E}_t \left[ \left(\frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)} - 1\right) - \log \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)} \right]$$
+$$D_{\text{KL}}^{\text{approx}} = \mathbb{E}_{t\sim \mathrm{Uniform}[0, T_b - 1]}  \left[ \left(\frac{\pi_\theta(A_t \mid S_t)}{\pi_{\theta_{\text{old}}}(A_t \mid S_t)} - 1\right) - \log \frac{\pi_\theta(A_t \mid S_t)}{\pi_{\theta_{\text{old}}}(A_t \mid S_t)} \right]$$
 
 If this exceeds the target threshold ($0.015$), remaining epochs are skipped. This acts as a safety valve against policy collapse.
 
