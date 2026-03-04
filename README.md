@@ -76,11 +76,11 @@ Four circular obstacles are placed in the workspace. At the start of each episod
 
 ### Reward Function
 
-$$r_t = \underbrace{\alpha \cdot \Delta d \cdot b(d)}_{\text{progress + near-goal boost}} - \underbrace{\beta}_{\text{step penalty}} - \underbrace{\sum_i p_i}_{\text{obstacle proximity}} + \underbrace{R_{\text{terminal}}}_{\text{goal / fail}}$$
+$$r_t = \underbrace{\alpha \cdot \Delta d \cdot b(d)}_{\text{progress + near-goal boost}} - \underbrace{\beta}_{\text{step penalty}} - \underbrace{\sum_i p_i}_{\text{obstacle proximity}} + \underbrace{R_{\text{terminal}}}_{\text{goal / collision / fail}}$$
 
 where the boost factor $b(d)$ amplifies the progress signal near the goal:
 
-$$b(d) = \begin{cases} 1 + k \cdot \left(1 - \dfrac{d}{R}\right) & \text{if } d < R \\[4pt] 1 & \text{otherwise} \end{cases}$$
+$$b(d) = \begin{cases} 1 + k \cdot \left(1 - \dfrac{d}{R}\right) & \text{if } d < R \\ 1 & \text{otherwise} \end{cases}$$
 
 | Component | Parameter | Default | Description |
 |---|---|---|---|
@@ -88,8 +88,8 @@ $$b(d) = \begin{cases} 1 + k \cdot \left(1 - \dfrac{d}{R}\right) & \text{if } d 
 | Near-goal boost factor | $k$ | 3.0 | Maximum extra multiplier on progress when $d \to 0$ |
 | Boost radius | $R$ | 80 px | Distance threshold below which the boost activates |
 | Step penalty | $\beta$ | 0.005 | Small per-step cost to encourage efficiency |
-| Obstacle danger | penalty | 0.05 | Quadratic ramp when LIDAR reading < 0.15 threshold |
-| Collision penalty | | 10.0 | Large penalty on direct obstacle contact |
+| Obstacle danger | $p_i$ | 0.05 | Quadratic ramp when LIDAR reading < 0.15 threshold |
+| Collision penalty | $R_{\text{collision}}$ | 10.0 | Large penalty on direct obstacle contact |
 | Goal bonus | $R_{\text{goal}}$ | +50.0 | Terminal reward for reaching the target |
 | Failure / timeout | $R_{\text{fail}}$ | −15.0 | Terminal penalty for failure or timeout |
 
@@ -127,15 +127,11 @@ Instead of updating after each episode, PPO accumulates a buffer of at least 204
 
 ### Clipped Surrogate Objective
 
-For the same batch of transitions, actions are re-evaluated under the **current** policy to compute the probability ratio:
+For the same batch of transitions, actions are re-evaluated under the **current** policy to compute the clipped surrogate loss. Let $\hat{A}_t$ denote the advantage estimate (batch-normalized returns) and $\epsilon = 0.15$ the clip coefficient:
 
-$$r_t(\theta) = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)} = \exp\bigl(\log \pi_\theta(a_t \mid s_t) - \log \pi_{\theta_{\text{old}}}(a_t \mid s_t)\bigr)$$
+$$\mathcal{L}^{\text{CLIP}} = -\mathbb{E}_t \left[ \min\!\left(\frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)} \hat{A}_t,\ \text{clip}\!\left(\frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)},\, 1 - \epsilon,\, 1 + \epsilon\right) \hat{A}_t\right) \right]$$
 
-The clipped surrogate loss prevents the ratio from deviating too far from $1$:
-
-$$\mathcal{L}^{\text{CLIP}} = -\mathbb{E}_t \left[ \min\bigl(r_t \hat{A}_t,\; \text{clip}(r_t,\, 1 - \epsilon,\, 1 + \epsilon)\, \hat{A}_t\bigr) \right]$$
-
-where $\hat{A}_t$ is the advantage estimate (batch-normalized returns) and $\epsilon = 0.15$ is the clip coefficient.
+The clipping prevents the probability ratio from deviating too far from $1$, limiting destructively large policy updates.
 
 An **entropy bonus** is subtracted from the loss to encourage exploration:
 
@@ -145,7 +141,7 @@ $$\mathcal{L} = \mathcal{L}^{\text{CLIP}} - c_{\text{ent}} \cdot H[\pi_\theta]$$
 
 Before each epoch, the approximate KL divergence between old and new policies is computed:
 
-$$D_{\text{KL}}^{\text{approx}} = \mathbb{E}_t \bigl[ (r_t - 1) - \log r_t \bigr]$$
+$$D_{\text{KL}}^{\text{approx}} = \mathbb{E}_t \left[ \left(\frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)} - 1\right) - \log \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)} \right]$$
 
 If this exceeds the target threshold ($0.015$), remaining epochs are skipped. This acts as a safety valve against policy collapse.
 
@@ -155,7 +151,7 @@ The policy network outputs parameters of a diagonal Gaussian distribution:
 
 $$\mu = \tanh(\text{head}_\mu(z)) \cdot \Delta\theta_{\max}$$
 
-$$\sigma = \exp\bigl(\text{clamp}(\text{head}_\sigma(z),\; \log\sigma_{\min},\; \log\sigma_{\max})\bigr) \cdot \Delta\theta_{\max}$$
+$$\sigma = \exp\bigl(\text{clamp}(\text{head}_\sigma(z), \log\sigma_{\min}, \log\sigma_{\max})\bigr) \cdot \Delta\theta_{\max}$$
 
 where $z$ is the output of a shared MLP trunk $(256 \to 128)$ with ReLU activations. The $\tanh$ on the mean ensures it stays within the physical action bounds. Standard deviation is clamped in log-space to $[-2.0,\; 0.5]$.
 
