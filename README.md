@@ -258,7 +258,7 @@ We compared the trained PPO policy against a vanilla REINFORCE agent in the same
 </p>
 
 <p align="center">
-  <img src="assets/test_metrics_reinforce.gif" alt="REINFORCE metrics" width="400">
+  <img src="assets/test_metrics_reinforce.gif" alt="REINFORCE metrics" width="600">
 </p>
 
 ---
