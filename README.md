@@ -69,7 +69,7 @@ Four circular obstacles are placed in the workspace. At the start of each episod
 | Condition | Type | Reward signal |
 |---|---|---|
 | End-effector within `target_thresh` of target | **Success** | $+50$ |
-| A link collides with an obstacle | **Collision** | $-10 - 15$ |
+| A link collides with an obstacle | **Collision** | $-10$ |
 | A link segment passes through the target point | **Failure** | $-15$ |
 | Stagnation detected (no progress) | **Failure** | $-15$ |
 | Step count reaches `max_steps` | **Truncation** | $-15$ |
@@ -91,7 +91,7 @@ $$b(d) = 1 + k \cdot \left(1 - \frac{d}{R}\right) \quad \text{if } d < R, \qquad
 | Obstacle danger | $p_i$ | 0.05 | Quadratic ramp when LIDAR reading < 0.15 threshold |
 | Collision penalty | $R_{\text{collision}}$ | 10.0 | Large penalty on direct obstacle contact |
 | Goal bonus | $R_{\text{goal}}$ | +50.0 | Terminal reward for reaching the target |
-| Failure / timeout | $R_{\text{fail}}$ | −15.0 | Terminal penalty for failure or timeout |
+| Failure / timeout / stagnation | $R_{\text{fail}}$ | −15.0 | Terminal penalty for failure, timeout, or stagnation |
 
 **Obstacle proximity penalty** — for each LIDAR sensor, if the minimum ray reading drops below the danger threshold:
 
