@@ -8,7 +8,8 @@ from .config import EnvConfig, LidarConfig, ObstacleConfig, RewardConfig, RobotC
 from .obstacle import Obstacle, ObstacleManager
 from .robot import Robot
 from .state import State
-from .model_ppo import Model
+from .model_actor_critic import Model
+from .physics_robot import Robot_Dynamic_3DOF
 
 
 class Environment:
@@ -133,6 +134,7 @@ class Environment:
             self.success = bool(info.get("success", False))
             self.reason = str(info.get("reason", "done"))
 
+
             if self._train_mode:
                 collision = info.get("reason") == "collision"
                 self.model.finish_episode(
@@ -146,7 +148,7 @@ class Environment:
                     final_distance=final_dist,
                     steps=int(self.steps),
                 )
-
+            #print(f"Эпизод окончен! Причина: {info['reason']}, Шагов: {self.steps}, Дистанция: {info['final_distance']:.2f}")
             self._needs_reset = True
 
         self._last_state = st
@@ -154,35 +156,43 @@ class Environment:
         return np.asarray(st, dtype=np.float32), float(reward), bool(self.done), info
 
     def get_render_data(self) -> Dict[str, Any]:
-        joints = self.robot.joints_xy().astype(np.float32)
-        ee = joints[-1]
-        dist = float(np.linalg.norm(ee - self.target))
+            joints = self.robot.joints_xy().astype(np.float32)
+            ee = joints[-1]
+            dist = float(np.linalg.norm(ee - self.target))
 
-        mgr = self.robot.lidar_manager
-        lidar_data = [
-            {
-                "position": lidar.position.copy(),
-                "readings": lidar.scan(mgr._obstacles),
-                "ray_dirs": lidar.ray_dirs,
-                "ray_maxlen": lidar.ray_maxlen,
+            mgr = self.robot.lidar_manager
+            # Получаем все 24 чтения (3 лидара по 8 лучей) одним вызовом
+            all_readings = mgr.scan()
+            num_rays = mgr.cfg.num_rays
+
+            lidar_data = []
+            for i in range(mgr.n_lidars):
+                # Вырезаем кусочек чтений для конкретного лидара (например, 0:8, 8:16...)
+                start_idx = i * num_rays
+                end_idx = (i + 1) * num_rays
+                current_readings = all_readings[start_idx:end_idx]
+
+                lidar_data.append({
+                    "position": mgr.positions[i].copy(),   # Берем позицию из массива позиций
+                    "readings": current_readings,          # Кусочек общего массива
+                    "ray_dirs": mgr.ray_dirs,              # Направления лучей (общие для всех)
+                    "ray_maxlen": mgr.cfg.ray_maxlen_px    # Макс. длина из конфига
+                })
+
+            return {
+                "joints": joints,
+                "end_effector": ee,
+                "target": self.target.copy(),
+                "distance": dist,
+                "theta": self.robot.theta,
+                "obstacles": self.obstacle_manager.get_render_data(),
+                "lidar": lidar_data,
+                "step": int(self.steps),
+                "done": bool(self.done),
+                "success": bool(self.success),
+                "reason": self.reason,
+                "train_mode": bool(self._train_mode),
             }
-            for lidar in mgr.lidars
-        ]
-
-        return {
-            "joints": joints,
-            "end_effector": ee,
-            "target": self.target.copy(),
-            "distance": dist,
-            "theta": self.robot.theta,
-            "obstacles": self.obstacle_manager.get_render_data(),
-            "lidar": lidar_data,
-            "step": int(self.steps),
-            "done": bool(self.done),
-            "success": bool(self.success),
-            "reason": self.reason,
-            "train_mode": bool(self._train_mode),
-        }
 
     def get_metrics(self) -> Dict[str, Any]:
         return {
@@ -222,8 +232,17 @@ class Environment:
         )
         return self._base + np.array([self._reach_max * 0.5, 0.0], dtype=np.float32)
 
-    def _get_state(self) -> State:
-        return self.robot.obs()
+    def _get_state(self) -> np.ndarray:
+        state_obj = self.robot.obs()
+        
+        return np.concatenate([
+            np.sin(state_obj.thetas),      # 3
+            np.cos(state_obj.thetas),      # 3
+            [state_obj.ee_x, state_obj.ee_y], # 2
+            [state_obj.dist_x, state_obj.dist_y], # 2
+            state_obj.lidar_rays,                # 24
+            state_obj.vels                 # 3 (ИТОГО: 37)
+        ]).astype(np.float32)
 
     def _compute_reward_and_done(self, current_state: State) -> Tuple[float, bool, Dict[str, Any]]:
         joints = self.robot.joints_xy()
@@ -251,18 +270,18 @@ class Environment:
 
         self._dist_history.append(dist)
         stagnation_done = False
-        win = self.rew_cfg.stagnation_window
-        if len(self._dist_history) >= win:
-            dists = self._dist_history[-win:]
-            mean_progress = sum(abs(dists[i] - dists[i + 1]) for i in range(len(dists) - 1)) / (
-                len(dists) - 1
-            )
-            net_progress = abs(dists[-1] - dists[0])
-            if (
-                mean_progress < self.rew_cfg.stagnation_thresh
-                or net_progress < self.rew_cfg.stagnation_thresh
-            ):
-                stagnation_done = True
+        # win = self.rew_cfg.stagnation_window
+        # if len(self._dist_history) >= win:
+        #     dists = self._dist_history[-win:]
+        #     mean_progress = sum(abs(dists[i] - dists[i + 1]) for i in range(len(dists) - 1)) / (
+        #         len(dists) - 1
+        #     )
+        #     net_progress = abs(dists[-1] - dists[0])
+        #     if (
+        #         mean_progress < self.rew_cfg.stagnation_thresh
+        #         or net_progress < self.rew_cfg.stagnation_thresh
+        #     ):
+        #         stagnation_done = True
 
         collision = self.check_collision(joints)
         fail_reason = ""

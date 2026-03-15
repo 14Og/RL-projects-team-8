@@ -1,39 +1,10 @@
 import math
 from typing import List
-
 import numpy as np
 
+from ppo.fast_math import fast_multi_lidar_scan
 from .config import LidarConfig
 from .obstacle import Obstacle
-
-
-class Lidar:
-    def __init__(self, num_rays: int, ray_maxlen: float) -> None:
-        self.ray_maxlen = ray_maxlen
-        self.position = np.zeros(2, dtype=float)
-
-        angles = np.linspace(0, 2 * math.pi, num_rays, endpoint=False)
-        self.ray_dirs = np.stack([np.cos(angles), np.sin(angles)], axis=1)
-
-    def scan(self, obstacles: List[Obstacle]) -> np.ndarray:
-        n = len(self.ray_dirs)
-        readings = np.ones(n, dtype=float)
-
-        for i, d in enumerate(self.ray_dirs):
-            min_t = self.ray_maxlen
-            for obs in obstacles:
-                oc = self.position - obs.center
-                b = 2.0 * float(np.dot(d, oc))
-                c = float(np.dot(oc, oc)) - obs.radius**2
-                disc = b * b - 4.0 * c
-                if disc >= 0:
-                    t = (-b - math.sqrt(disc)) / 2.0
-                    if 0.0 <= t < min_t:
-                        min_t = t
-            readings[i] = min_t / self.ray_maxlen
-
-        return readings
-
 
 class LidarManager:
     def __init__(self, cfg: LidarConfig, n_dof: int) -> None:
@@ -41,34 +12,58 @@ class LidarManager:
         self.n_dof = n_dof
         self._obstacles: List[Obstacle] = []
 
-        n_lidars = n_dof * (int(cfg.lidar_joints) + int(cfg.lidar_midlinks))
-        self.lidars: List[Lidar] = [Lidar(cfg.num_rays, cfg.ray_maxlen_px) for _ in range(n_lidars)]
+        # Считаем общее количество лидаров
+        self.n_lidars_count = n_dof * (int(cfg.lidar_joints) + int(cfg.lidar_midlinks))
+        
+        # Храним позиции всех лидаров в одном массиве [N_lidars, 2]
+        self.positions = np.zeros((self.n_lidars_count, 2), dtype=float)
+
+        # Предрассчитываем направления лучей ОДИН раз для всех лидаров
+        angles = np.linspace(0, 2 * math.pi, cfg.num_rays, endpoint=False)
+        self.ray_dirs = np.stack([np.cos(angles), np.sin(angles)], axis=1).astype(float)
 
     @property
     def n_lidars(self) -> int:
-        return len(self.lidars)
+        return self.n_lidars_count
 
     @property
     def n_rays_total(self) -> int:
-        return self.n_lidars * self.cfg.num_rays
+        return self.n_lidars_count * self.cfg.num_rays
 
     def set_obstacles(self, obstacles: List[Obstacle]) -> None:
         self._obstacles = obstacles
 
     def update_positions(self, joints: np.ndarray) -> None:
+        # joints: [4, 2] (база + 3 сустава)
         idx = 0
         if self.cfg.lidar_joints:
+            # Устанавливаем позиции лидаров на суставы (1, 2, 3)
             for i in range(1, self.n_dof + 1):
-                self.lidars[idx].position = joints[i].copy()
+                self.positions[idx] = joints[i]
                 idx += 1
         if self.cfg.lidar_midlinks:
+            # Устанавливаем позиции лидаров на середины звеньев
             for i in range(self.n_dof):
-                self.lidars[idx].position = ((joints[i] + joints[i + 1]) / 2.0).copy()
+                self.positions[idx] = (joints[i] + joints[i + 1]) / 2.0
                 idx += 1
 
     def scan(self) -> np.ndarray:
-        return np.concatenate([lidar.scan(self._obstacles) for lidar in self.lidars])
+        # Если препятствий нет — возвращаем массив единиц (чистый путь)
+        if not self._obstacles:
+            return np.ones(self.n_rays_total, dtype=float)
 
+        # Подготавливаем данные препятствий в виде плоских массивов для Numba
+        obs_centers = np.array([o.center for o in self._obstacles], dtype=float)
+        obs_radii = np.array([o.radius for o in self._obstacles], dtype=float)
 
-if __name__ == "__main__":
-    raise RuntimeError("Run main.py instead.")
+        # ВЫЗЫВАЕМ ОПТИМИЗИРОВАННУЮ ФУНКЦИЮ СРАЗУ ДЛЯ ВСЕХ ЛИДАРОВ
+        # Она вернет один плоский массив (например, 24 значения)
+        return fast_multi_lidar_scan(
+            self.positions,      # [3, 2]
+            self.ray_dirs,       # [8, 2]
+            obs_centers,         # [4, 2]
+            obs_radii,           # [4]
+            float(self.cfg.ray_maxlen_px)
+        )
+
+# Класс Lidar больше не нужен, так как LidarManager делает всё сам через массивы

@@ -17,7 +17,7 @@ class GaussianMLPPolicy(nn.Module):
         self.cfg = cfg
         layers: list[nn.Module] = []
         in_dim = obs_dim
-        
+        print(f"Building policy network with obs_dim={obs_dim}, act_dim={act_dim}, hidden_sizes={self.cfg.hidden_sizes}")
         for h in self.cfg.hidden_sizes:
             layers.append(nn.Linear(in_dim, h))
             layers.append(nn.ReLU())
@@ -25,19 +25,23 @@ class GaussianMLPPolicy(nn.Module):
         self.net = nn.Sequential(*layers)
         self.mu_head = nn.Linear(in_dim, act_dim)
         self.log_std_head = nn.Linear(in_dim, act_dim)
+        self.value_head = nn.Linear(in_dim, 1) # critic 
         self.action_limit = float(action_limit)
 
         nn.init.zeros_(self.mu_head.weight)
         nn.init.zeros_(self.mu_head.bias)
         nn.init.zeros_(self.log_std_head.weight)
-        nn.init.zeros_(self.log_std_head.bias)
+        nn.init.constant_(self.log_std_head.bias, -2.0)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         z = self.net(x)
         mu = torch.tanh(self.mu_head(z)) * self.action_limit
         log_std = torch.clamp(self.log_std_head(z), self.cfg.log_std_min, self.cfg.log_std_max)
-        sigma = torch.exp(log_std) * self.action_limit
-        return mu, sigma
+        sigma = torch.exp(log_std) #* self.action_limit
+        #print(f"DEBUG: log_std min/max: {log_std.min().item()}, {log_std.max().item()}")
+        #critc
+        value = self.value_head(z)
+        return mu, sigma, value 
 
 
 class Model:
@@ -51,6 +55,7 @@ class Model:
         max_steps: int = 200,
         policy: Optional[nn.Module] = None,
         device: Optional[str] = None,
+        
     ) -> None:
         self.cfg = cfg
         if not (0.0 < self.cfg.gamma <= 1.0):
@@ -81,6 +86,10 @@ class Model:
         self.buffer_rewards: List[float] = []
         self.buffer_terminals: List[bool] = []
         self.buffer_step_count = 0
+        
+        #save values for critic
+        self._values: List[torch.Tensor] = []
+        self.buffer_values: List[torch.Tensor] = []
 
         self.train: Dict[str, List[float]] = {
             "total_reward": [],
@@ -109,12 +118,13 @@ class Model:
         self._states.clear()
         self._actions.clear()
         self._log_probs.clear()
+        self._values.clear() 
         self._rewards.clear()
         self._steps = 0
 
     def select_action(self, state: Union[np.ndarray, State], *, train: bool = True) -> np.ndarray:
         s = self._to_tensor(state)
-        mu, sigma = self.policy(s)
+        mu, sigma, val = self.policy(s) # Get value from critic
         dist = Normal(mu, sigma)
 
         if train:
@@ -123,6 +133,7 @@ class Model:
             self._states.append(s.squeeze(0))
             self._actions.append(u.squeeze(0))
             self._log_probs.append(logp.squeeze(0))
+            self._values.append(val.squeeze(0).detach())
             self._steps += 1
             return u.squeeze(0).detach().cpu().numpy()
 
@@ -131,7 +142,7 @@ class Model:
     @torch.no_grad()
     def act(self, state: Union[np.ndarray, State], *, deterministic: bool = True) -> np.ndarray:
         s = self._to_tensor(state)
-        mu, sigma = self.policy(s)
+        mu, sigma, values = self.policy(s)
         u = mu if deterministic else Normal(mu, sigma).sample()
         return u.squeeze(0).cpu().numpy()
 
@@ -175,6 +186,7 @@ class Model:
         self.buffer_log_probs.extend(self._log_probs)
         self.buffer_rewards.extend(returns.tolist())
         self.buffer_step_count += len(self._rewards)
+        self.buffer_values.extend(self._values)
 
         metrics = {
             "total_reward": total_reward,
@@ -201,12 +213,12 @@ class Model:
         return metrics
 
     def _clear_batch_buffers(self) -> None:
-        print("Clearing PPO buffers...")
         self.buffer_states.clear()
         self.buffer_actions.clear()
         self.buffer_log_probs.clear()
         self.buffer_rewards.clear()
         self.buffer_terminals.clear()
+        self.buffer_values.clear()
         self.buffer_step_count = 0
 
     def _update_ppo(self) -> Dict[str, float]:
@@ -216,7 +228,10 @@ class Model:
         b_returns = torch.tensor(self.buffer_rewards, dtype=torch.float32).to(self.device)
 
         with torch.no_grad():
-            advantages = (b_returns - b_returns.mean()) / (b_returns.std() + 1e-8)
+            _, _, b_values = self.policy(b_states)
+            b_values = b_values.squeeze(-1)
+            advantages = b_returns - b_values
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         batch_size = b_states.shape[0]
         mbs = min(self.cfg.mini_batch_size, batch_size)
@@ -230,7 +245,7 @@ class Model:
 
         for _ in range(self.cfg.ppo_epochs):
             with torch.no_grad():
-                mu_full, sigma_full = self.policy(b_states)
+                mu_full, sigma_full, values_full = self.policy(b_states)
                 dist_full = Normal(mu_full, sigma_full)
                 new_lp_full = dist_full.log_prob(b_actions).sum(dim=-1)
                 log_ratio_full = new_lp_full - b_log_probs
@@ -250,8 +265,11 @@ class Model:
                 mb_actions = b_actions[mb_idx]
                 mb_log_probs = b_log_probs[mb_idx]
                 mb_advantages = advantages[mb_idx]
+                mb_returns = b_returns[mb_idx]
 
-                mu, sigma = self.policy(mb_states)
+                mu, sigma, values = self.policy(mb_states)
+                values = values.squeeze(-1) 
+
                 dist = Normal(mu, sigma)
                 new_log_probs = dist.log_prob(mb_actions).sum(dim=-1)
 
@@ -261,9 +279,10 @@ class Model:
                 surr1 = ratio * mb_advantages
                 surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * mb_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
+                value_loss = nn.functional.mse_loss(values, mb_returns)
 
                 entropy = dist.entropy().sum(dim=-1).mean()
-                loss = policy_loss - self.cfg.entropy_coef * entropy
+                loss = policy_loss + 0.5 * value_loss - self.cfg.entropy_coef * entropy
 
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -276,7 +295,8 @@ class Model:
                 grad_norms.append(grad_norm.item() if hasattr(grad_norm, "item") else grad_norm)
 
         self.scheduler.step()
-
+        
+        #print(final_sigmas)
         sigmas_per_joint = final_sigmas if final_sigmas is not None else np.zeros(3)
         return {
             "loss": float(np.mean(epoch_losses)) if epoch_losses else float("nan"),

@@ -13,7 +13,7 @@ from .config import (
     RobotConfig,
 )
 from .env import Environment
-from .model_ppo import Model
+from .model_actor_critic import Model
 
 
 def _is_notebook() -> bool:
@@ -35,7 +35,7 @@ def compute_obs_dim(robot_cfg: RobotConfig, lidar_cfg: LidarConfig) -> int:
     """
     n_dof = len(robot_cfg.link_lengths)
     n_lidars = n_dof * (int(lidar_cfg.lidar_joints) + int(lidar_cfg.lidar_midlinks))
-    return 2 * n_dof + 4 + n_lidars * lidar_cfg.num_rays
+    return 2 * n_dof + 4 + n_lidars * lidar_cfg.num_rays + n_dof
 
 
 class Runner:

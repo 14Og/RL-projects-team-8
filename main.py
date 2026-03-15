@@ -24,7 +24,7 @@ def parse_args() -> ap.Namespace:
 def _build_model(args, robot_cfg, lidar_cfg, model_cfg, gui_cfg, env_cfg):
     """Construct a PPO Model."""
     from ppo.runner import compute_obs_dim
-    from ppo.model_ppo import Model
+    from ppo.model_actor_critic import Model
 
     obs_dim = compute_obs_dim(robot_cfg, lidar_cfg)
     return Model(

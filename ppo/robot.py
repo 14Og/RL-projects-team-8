@@ -2,6 +2,8 @@ from .state import State
 from .config import RobotConfig, LidarConfig
 from .obstacle import Obstacle
 from .lidar import LidarManager
+from .physics_robot import Robot_Dynamic_3DOF
+
 
 import numpy as np
 
@@ -32,8 +34,19 @@ class Robot:
         self._lidar_manager = LidarManager(lidar_cfg, self.n_dof)
         self._lidar_manager.set_obstacles(obstacles)
 
+        self.physics = Robot_Dynamic_3DOF(
+            masses=np.array(self.cfg.masses),
+            lengthes=np.array(self.cfg.link_lengths) / 100.0
+        )
+
         if theta is not None:
             self.set_theta(theta)
+
+        self._dq = np.zeros(self.n_dof, dtype=float)
+        self._q_target = self._theta.copy()
+
+        self.Kp = np.array(self.cfg.Kp)
+        self.Kd = np.array(self.cfg.Kd)
 
     @property
     def theta(self) -> np.ndarray:
@@ -78,6 +91,7 @@ class Robot:
 
         return State(
             thetas=self._theta.copy(),
+            vels=self._dq.copy(),
             ee_x=ee_x,
             ee_y=ee_y,
             dist_x=dist_x,
@@ -142,6 +156,9 @@ class Robot:
             if success:
                 break
 
+  
+        self._dq = np.zeros(self.n_dof, dtype=float)
+        self._q_target = self._theta.copy()
         return self.obs()
 
     @staticmethod
@@ -165,15 +182,37 @@ class Robot:
             theta = np.array([self.wrap_angle(float(t)) for t in theta], dtype=float)
         self._theta = theta
 
+    def physics_step(self, dt: float):
+        # 1. Compute the error between current angles and target angles, with proper wrapping
+        error = (self._q_target - self._theta + np.pi) % (2 * np.pi) - np.pi
+        
+        # 2.get gravity vector from physics model
+        _, G = self.physics.get_matrices(self._theta)
+        
+        # 3. PD-control to compute torques, with gravity compensation
+        tau = self.Kp * error - self.Kd * self._dq + G
+        tau = np.clip(tau, -50, 50) # torque limits for numerical stability
+        #print(f"tau: {tau}, error: {error}")
+        
+        # 4. RK4 update of the robot state using the physics model
+        self._theta, self._dq = self.physics.update_rk4(self._theta, self._dq, tau, dt)
+        
+        # 5. Обязательная нормализация углов
+        self._theta = np.array([self.wrap_angle(t) for t in self._theta], dtype=float)
+
     def step(self, dtheta: np.ndarray) -> Tuple[State, np.ndarray]:
         dtheta = np.asarray(dtheta, dtype=float).reshape(self.n_dof)
         if self.cfg.dtheta_max is not None:
             dtheta = self.clip_dtheta(dtheta, self.cfg.dtheta_max)
 
-        self._theta = self._theta + dtheta
-
-        if self.cfg.wrap_angles:
-            self._theta = np.array([self.wrap_angle(t) for t in self._theta], dtype=float)
+        self._q_target += dtheta
+        self._q_target = np.array([self.wrap_angle(t) for t in self._q_target], dtype=float)
+        
+        dt_phys = 0.001
+        n_substeps = 10 
+        
+        for _ in range(n_substeps):
+            self.physics_step(dt_phys)
 
         return self.obs(), dtheta
 

@@ -132,7 +132,6 @@ class PygameRenderer:
 
         for p in pts:
             pygame.draw.circle(self.screen, (80, 80, 80), p, 8)
-
         tx, ty = int(target[0]), int(target[1])
         pygame.draw.circle(self.screen, (220, 50, 50), (tx, ty), 6)
         pygame.draw.circle(
