@@ -191,7 +191,7 @@ $\epsilon$ is multiplied by a discount factor of $0.99997$, gradually reducing i
 | Epsilon min | 0.01 |
 | Max steps | 50 |
 | Fuel tank | 16 |
-| Training episodes | 300,000 |
+| Training episodes | 200,000-300,000 |
 | Save every | 50,000 |
 | Progress every | 1,000 |
 
