@@ -6,7 +6,13 @@ Training a taxi agent to pick up and deliver passengers on a 7x7 grid, with a fu
 
 ---
 
+
 ## Problem Definition
+
+<p align="center">
+  <img src="assets/reference.gif" alt="Reference Gym Taxi-v3" width="350"><br>
+  <sub>Reference: Gymnasium Taxi-v3 (5x5 grid)</sub>
+</p>
 
 A taxi moves on a 7x7 grid. The agent must:
 - Pick up a passenger at one of four fixed locations
@@ -111,7 +117,16 @@ The exploration rate $\epsilon$ is initially set to $1$. After each episode, $\e
 ---
 
 
+
 ## Demo
+
+### Reference: Gymnasium Taxi-v3 (5x5 grid)
+
+<p align="center">
+  <img src="assets/reference.gif" alt="Reference Gym Taxi-v3" width="400">
+</p>
+
+---
 
 ### Environment **with fuel/gas system**
 - The agent achieves **~88% success rate** after ~200,000 episodes.
@@ -222,4 +237,4 @@ python main.py --test
 
 ## License
 
-MIT License
+GNU General Public License v3.0
