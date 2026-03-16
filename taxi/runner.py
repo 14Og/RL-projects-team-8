@@ -57,7 +57,7 @@ class Runner:
                     f"Episode {episode:>7} | "
                     f"Avg reward: {avg_r:>6.1f} | "
                     f"Success: {recent_sr:>5.1f}% | "
-                    f": {self.agent.epsilon:.4f}"
+                    f"epsilon: {self.agent.epsilon:.4f}"
                 )
                 self._update_plot(fig, ax_reward, ax_success, all_rewards, all_success)
 
