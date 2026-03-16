@@ -71,7 +71,7 @@ $$Q(s, a)$$
 Update rule:
 
 $$
-Q(s, a) \leftarrow Q(s, a) + \alpha [r + \gamma \max_{a'} Q(s', a') - Q(s, a)]
+Q(s, a) \leftarrow Q(s, a) + \alpha [r(s, a, s') + \gamma \max_{a'} Q(s', a') - Q(s, a)]
 $$
 
 - $\alpha$: learning rate
