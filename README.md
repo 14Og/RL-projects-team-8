@@ -82,7 +82,8 @@ $$
 Exploration is managed by $\epsilon$-greedy policy:
 - With probability $\epsilon$, choose random action, otherwise, choose action with highest Q-value
 - Otherwise, choose action with highest Q-value
-The exploration rate $\epsilon$ is initially set to $1$. After each episode, $\epsilon$ is multiplied by a discount factor of $0.999995$, gradually reducing its value until it reaches a minimum of $0.01$. This decay schedule ensures extensive exploration early in training and a shift toward exploitation as learning progresses.
+The exploration rate $\epsilon$ is initially set to $1$. After each episode,
+$\epsilon$ is multiplied by a discount factor of $0.99997$, gradually reducing its value until it reaches a minimum of $0.01$. This decay schedule ensures extensive exploration early in training and a shift toward exploitation as learning progresses.
 ---
 
 ## Development History
