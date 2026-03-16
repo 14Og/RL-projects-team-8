@@ -121,6 +121,18 @@ $\epsilon$ is multiplied by a discount factor of $0.99997$, gradually reducing i
 
 ## Demo
 
+### Environment **without fuel/gas system**
+- The agent achieves **~100% success rate** after ~150,000 episodes.
+
+<p align="center">
+  <img src="assets/train_nofuel.gif" alt="Training no fuel" width="600">
+</p>
+<p align="center">
+  <img src="assets/test_nofuel.gif" alt="Test no fuel" width="600">
+</p>
+
+---
+
 ### Environment **with fuel/gas system**
 - The agent achieves **~88% success rate** after ~200,000 episodes.
 
@@ -130,18 +142,6 @@ $\epsilon$ is multiplied by a discount factor of $0.99997$, gradually reducing i
 
 <p align="center">
   <img src="assets/test.gif" alt="Test with fuel" width="600">
-</p>
-
----
-
-### Environment **without fuel/gas system**
-- The agent achieves **~100% success rate** after ~150,000 episodes.
-
-<p align="center">
-  <img src="assets/train_nofuel.gif" alt="Training no fuel" width="600">
-</p>
-<p align="center">
-  <img src="assets/test_nofuel.gif" alt="Test no fuel" width="600">
 </p>
 
 ---
