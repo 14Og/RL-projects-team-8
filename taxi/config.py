@@ -16,7 +16,7 @@ class Action(Enum):
 class EnvConfig:
     rows: int = 7
     cols: int = 7
-    max_fuel: int = 16
+    max_fuel: int = 30
     max_steps: int = 50
     gas_station: tuple = (3, 3)
     use_fuel: bool = True

@@ -47,7 +47,7 @@ def main():
             gui_cfg=gui_cfg,
             renderer=renderer,
         )
-        runner.test()
+        runner.test(args.model_path[0] if args.model_path else None)
 
 
 if __name__ == "__main__":

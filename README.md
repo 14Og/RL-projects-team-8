@@ -90,7 +90,7 @@ $\epsilon$ is multiplied by a discount factor of $0.99997$, gradually reducing i
 
 ### Initial Environment
 
-- Started with Gymnasium Taxi (5×5 grid, 4 passenger locations, 4 destinations)
+- Started with Gymnasium Taxi (5×5 grid, 4 passenger locations + 1 in taxi, 4 destinations)
 - State space: $5 \times 5 \times 5 \times 4 = 500$
 
 ### Environment Extension
@@ -121,7 +121,7 @@ $\epsilon$ is multiplied by a discount factor of $0.99997$, gradually reducing i
 
 ## Demo
 
-### Environment **without fuel/gas system**
+### Environment **without fuel system**
 - The agent achieves **~100% success rate** after ~150,000 episodes.
 
 <p align="center">
@@ -133,13 +133,25 @@ $\epsilon$ is multiplied by a discount factor of $0.99997$, gradually reducing i
 
 ---
 
-### Environment **with fuel/gas system**
+
+### Environment **with large fuel tank (30 units)**
+- The agent achieves **~100% success rate** after ~120,000 episodes (task is trivial).
+
+<p align="center">
+  <img src="assets/train_large_fuel_tank.gif" alt="Training large fuel tank" width="600">
+</p>
+<p align="center">
+  <img src="assets/test_large_fuel_tank.gif" alt="Test large fuel tank" width="600">
+</p>
+
+---
+
+### Environment **with fuel system (16 units)**
 - The agent achieves **~88% success rate** after ~200,000 episodes.
 
 <p align="center">
   <img src="assets/train.gif" alt="Training with fuel" width="600">
 </p>
-
 <p align="center">
   <img src="assets/test.gif" alt="Test with fuel" width="600">
 </p>
@@ -228,8 +240,7 @@ python main.py --test
 |---|---|
 | Total reward | Sum of rewards for the episode |
 | Success rate | Sliding-window average of successful deliveries |
-| Steps / episode | Number of steps taken before termination |
-| Fuel used | Units of fuel consumed |
+| Fuel used | Units of fuel consumed (GUI) |
 
 ---
 
