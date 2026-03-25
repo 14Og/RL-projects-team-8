@@ -8,7 +8,7 @@ from .config import EnvConfig, LidarConfig, ObstacleConfig, RewardConfig, RobotC
 from .obstacle import Obstacle, ObstacleManager
 from .robot import Robot
 from .state import State
-from .model_actor_critic import Model
+from .model_actor_critic_ppo import Model
 from .physics_robot import Robot_Dynamic_3DOF
 
 
@@ -55,6 +55,20 @@ class Environment:
         self._curr_action = None
 
         self._dist_history: List[float] = []
+        self._rew_components: dict = {}
+        self._reset_rew_components()
+
+    def _reset_rew_components(self) -> None:
+        self._rew_components = {
+            "progress": 0.0,
+            "step_penalty": 0.0,
+            "vel_penalty": 0.0,
+            "obstacle_danger": 0.0,
+            "torque": 0.0,
+            "collision": 0.0,
+            "goal": 0.0,
+            "fail_timeout": 0.0,
+        }
 
     def check_collision(self, joints: np.ndarray) -> bool:
         for obs in self.obstacle_manager.obstacles:
@@ -75,8 +89,7 @@ class Environment:
         self.robot.reset(randomize=self.robot.cfg.randomize_theta)
         ee_start = self.robot.end_effector_xy()
 
-        if self.env_cfg.randomize_target:
-            self.target = self._sample_valid_target(ee_start)
+        self.target = self._sample_valid_target(self.target, ee_start, 1000, self.env_cfg.randomize_target)
 
         self.robot.set_target(self.target)
 
@@ -95,6 +108,7 @@ class Environment:
         self._curr_action = None
 
         self._dist_history.clear()
+        self._reset_rew_components()
 
         self._needs_reset = False
 
@@ -117,10 +131,17 @@ class Environment:
 
         if self._train_mode:
             u = self.model.select_action(st, train=True)
+            #print(f"Выбранное действие (обучение): {u}")
         else:
             u = self.model.select_action(st, train=False)
         st, self._curr_action = self.robot.step(u)
         self.steps += 1
+
+        if self._train_mode:
+            self.model.observe_step(self._curr_action, self.robot._dq)
+
+        self.obstacle_manager.update(dt=0.01)
+        self.robot.set_obstacles(self.obstacle_manager.obstacles)
 
         reward, done, info = self._compute_reward_and_done(st)
 
@@ -138,7 +159,7 @@ class Environment:
             if self._train_mode:
                 collision = info.get("reason") == "collision"
                 self.model.finish_episode(
-                    success=self.success, collision=collision, final_distance=final_dist
+                    success=self.success, collision=collision, final_distance=final_dist,
                 )
             else:
                 collision = info.get("reason") == "collision"
@@ -179,6 +200,10 @@ class Environment:
                     "ray_maxlen": mgr.cfg.ray_maxlen_px    # Макс. длина из конфига
                 })
 
+            danger_zone_px = float(
+                self.rew_cfg.obstacle_danger_threshold
+                * self.robot.lidar_manager.cfg.ray_maxlen_px
+            )
             return {
                 "joints": joints,
                 "end_effector": ee,
@@ -186,6 +211,7 @@ class Environment:
                 "distance": dist,
                 "theta": self.robot.theta,
                 "obstacles": self.obstacle_manager.get_render_data(),
+                "danger_zone_px": danger_zone_px,
                 "lidar": lidar_data,
                 "step": int(self.steps),
                 "done": bool(self.done),
@@ -216,11 +242,17 @@ class Environment:
                     return False
         return True
 
-    def _sample_valid_target(self, ee_start: np.ndarray, max_attempts: int = 1000) -> np.ndarray:
+    def _sample_valid_target(self, target_init, ee_start: np.ndarray, max_attempts: int = 1000, randomize: bool = True) -> np.ndarray:
         for _ in range(max_attempts):
             angle = self._rng.uniform(0, 2 * np.pi)
-            r = np.sqrt(self._rng.uniform(self._reach_min**2, self._reach_max**2))
-            candidate = self._base + np.array(
+            if randomize:
+                r = np.sqrt(self._rng.uniform(self._reach_min**2, self._reach_max**2))
+                candidate = self._base + np.array(
+                [r * np.cos(angle), r * np.sin(angle)], dtype=np.float32
+            )
+            else:
+                r = (self._rng.uniform(0, 90))
+                candidate = target_init + np.array(
                 [r * np.cos(angle), r * np.sin(angle)], dtype=np.float32
             )
             if self._is_target_valid(candidate, ee_start):
@@ -234,54 +266,114 @@ class Environment:
 
     def _get_state(self) -> np.ndarray:
         state_obj = self.robot.obs()
-        
-        return np.concatenate([
-            np.sin(state_obj.thetas),      # 3
-            np.cos(state_obj.thetas),      # 3
-            [state_obj.ee_x, state_obj.ee_y], # 2
+        ee = self.robot.end_effector_xy()
+
+        base = np.concatenate([
+            np.sin(state_obj.thetas),              # 3
+            np.cos(state_obj.thetas),              # 3
+            [state_obj.ee_x, state_obj.ee_y],     # 2
             [state_obj.dist_x, state_obj.dist_y], # 2
-            state_obj.lidar_rays,                # 24
-            state_obj.vels                 # 3 (ИТОГО: 37)
+            state_obj.vels / 15,                   # 3  →  total: 13
+        ])
+
+        if self.env_cfg.obs_mode == "base":
+            return base.astype(np.float32)
+
+        obs_features = []
+        for obs in self.obstacle_manager.obstacles:
+            rel = (obs.center - ee) / self._reach_max  # 2
+            obs_features.extend([rel[0], rel[1]])
+            if self.env_cfg.obs_mode == "dynamic":
+                v_max = self.obstacle_manager.cfg.ellipse_a * self.obstacle_manager.cfg.omega + 1e-6
+                vel = obs.velocity / v_max              # 2
+                obs_features.extend([vel[0], vel[1]])
+
+        return np.concatenate([
+            base,                   # 13
+            state_obj.lidar_rays,   # 24
+            obs_features,           # 2 per obs (static) or 4 per obs (dynamic)
         ]).astype(np.float32)
 
     def _compute_reward_and_done(self, current_state: State) -> Tuple[float, bool, Dict[str, Any]]:
         joints = self.robot.joints_xy()
         ee = joints[-1]
         dist = float(np.linalg.norm(ee - self.target))
-
+        r_vel = 0.0
         progress = float(self._prev_dist - dist)
-        reward = float(self.rew_cfg.progress_scale) * progress - float(self.rew_cfg.step_penalty)
+        vel_norm = float(np.linalg.norm(self.robot._dq))
+        #print(f"torques: {self._curr_action}")
+        _, G = self.robot.physics.get_matrices(self.robot._theta)
+        tau_limits = np.array(self.robot.cfg.tau_limits, dtype=float)
+        tau_excess = (self._curr_action - G) / tau_limits  # normalized residual per joint
+        if progress > 0:
+            r_progress = float(self.rew_cfg.progress_scale) * progress * 2
+        else:
+            r_progress = float(self.rew_cfg.progress_scale) * progress
+            r_vel = -float(self.rew_cfg.vel_penalty) * vel_norm
+
+        r_step = -float(self.rew_cfg.step_penalty)
+        r_torque = -float(self.rew_cfg.torque_penalty) * float(np.dot(tau_excess, tau_excess))
+        reward = r_progress + r_step + r_torque
 
         if dist < self.rew_cfg.progress_boost_radius:
             boost = 1.0 + self.rew_cfg.progress_near_boost * (
                 1.0 - dist / self.rew_cfg.progress_boost_radius
             )
+            r_progress += float(self.rew_cfg.progress_scale) * progress * (boost - 1.0)
             reward += float(self.rew_cfg.progress_scale) * progress * (boost - 1.0)
 
         all_readings = current_state.lidar_rays
         n_rays = self.robot.lidar_manager.cfg.num_rays
         n_lidars = self.robot.lidar_manager.n_lidars
         danger_threshold = float(self.rew_cfg.obstacle_danger_threshold)
+        global_lidar_min = 1.0
+        r_danger = 0.0
         for i in range(n_lidars):
             lidar_min = float(np.min(all_readings[i * n_rays : (i + 1) * n_rays]))
             if lidar_min < danger_threshold:
                 proximity = (1.0 - lidar_min / danger_threshold) ** 2
-                reward -= float(self.rew_cfg.obstacle_danger_penalty) * proximity
+                r_danger -= float(self.rew_cfg.obstacle_danger_penalty) * proximity
+            if lidar_min < global_lidar_min:
+                global_lidar_min = lidar_min
+
+        if global_lidar_min < danger_threshold:
+            proximity_scale = (1.0 - global_lidar_min / danger_threshold) ** 2
+            r_vel = -float(self.rew_cfg.vel_penalty) * vel_norm * proximity_scale
+
+        reward += r_danger + r_vel
+
+        if self.steps % 30 == 0:
+            step_total = r_progress + r_step + r_torque + r_danger + r_vel
+            # print(
+            #     f"  [step {self.steps:3d}] total={step_total:+.3f} | "
+            #     f"progress={r_progress:+.3f}  "
+            #     f"step={r_step:+.3f}  "
+            #     f"torque={r_torque:+.3f}  "
+            #     f"vel={r_vel:+.3f}  "
+            #     f"danger={r_danger:+.3f}"
+            # )
+
+        self._rew_components["progress"] += r_progress
+        self._rew_components["step_penalty"] += r_step
+        self._rew_components["vel_penalty"] += r_vel
+        self._rew_components["obstacle_danger"] += r_danger
+        self._rew_components["torque"] += r_torque
 
         self._dist_history.append(dist)
         stagnation_done = False
-        # win = self.rew_cfg.stagnation_window
-        # if len(self._dist_history) >= win:
-        #     dists = self._dist_history[-win:]
-        #     mean_progress = sum(abs(dists[i] - dists[i + 1]) for i in range(len(dists) - 1)) / (
-        #         len(dists) - 1
-        #     )
-        #     net_progress = abs(dists[-1] - dists[0])
-        #     if (
-        #         mean_progress < self.rew_cfg.stagnation_thresh
-        #         or net_progress < self.rew_cfg.stagnation_thresh
-        #     ):
-        #         stagnation_done = True
+        win = self.rew_cfg.stagnation_window
+        if len(self._dist_history) >= win:
+            dists = self._dist_history[-win:]
+            mean_progress = sum(abs(dists[i] - dists[i + 1]) for i in range(len(dists) - 1)) / (
+                len(dists) - 1
+            )
+            net_progress = abs(dists[-1] - dists[0])
+            #print(f"Средний прогресс за последние {win} шагов: {mean_progress:.4f}, Чистый прогресс: {net_progress:.4f}")
+            if (
+                mean_progress < self.rew_cfg.stagnation_thresh
+                or net_progress < self.rew_cfg.stagnation_thresh
+            ):
+                stagnation_done = True
 
         collision = self.check_collision(joints)
         fail_reason = ""
@@ -289,6 +381,7 @@ class Environment:
             fail = True
             fail_reason = "collision"
             reward -= float(self.rew_cfg.collision_penalty)
+            self._rew_components["collision"] -= float(self.rew_cfg.collision_penalty)
         else:
             fail = False
 
@@ -322,10 +415,29 @@ class Environment:
 
         if goal_reached:
             reward += float(self.rew_cfg.goal_reward)
+            self._rew_components["goal"] += float(self.rew_cfg.goal_reward)
         elif fail:
             reward -= float(self.rew_cfg.fail_penalty)
+            self._rew_components["fail_timeout"] -= float(self.rew_cfg.fail_penalty)
         elif timeout:
             reward -= float(self.rew_cfg.fail_penalty)
+            self._rew_components["fail_timeout"] -= float(self.rew_cfg.fail_penalty)
+
+        if done:
+            c = self._rew_components
+            total = sum(c.values())
+            # print(
+            #     f"[reward] total={total:+.1f} | "
+            #     f"progress={c['progress']:+.1f}  "
+            #     f"step={c['step_penalty']:+.1f}  "
+            #     f"torque={c['torque']:+.1f} "
+            #     f"vel={c['vel_penalty']:+.1f}  "
+            #     f"danger={c['obstacle_danger']:+.1f}  "
+            #     f"collision={c['collision']:+.1f}  "
+            #     f"goal={c['goal']:+.1f}  "
+            #     f"fail/timeout={c['fail_timeout']:+.1f}  "
+            #     f"| reason={info['reason']}"
+            # )
 
         self._prev_dist = dist
         return float(reward), bool(done), info

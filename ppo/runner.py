@@ -13,7 +13,7 @@ from .config import (
     RobotConfig,
 )
 from .env import Environment
-from .model_actor_critic import Model
+from .model_actor_critic_ppo import Model
 
 
 def _is_notebook() -> bool:
@@ -25,17 +25,30 @@ def _is_notebook() -> bool:
         return False
 
 
-def compute_obs_dim(robot_cfg: RobotConfig, lidar_cfg: LidarConfig) -> int:
-    """Compute flat observation dimension from config (no robot instantiation needed).
+def compute_obs_dim(
+    robot_cfg: RobotConfig,
+    lidar_cfg: LidarConfig,
+    obs_mode: str = "dynamic",
+    n_obstacles: int = 2,
+) -> int:
+    """Compute flat observation dimension from config.
 
-    Layout mirrors ``State.__array__``:
-        [sin(θi), cos(θi)] × n_dof   →  2 * n_dof
-        [ee_x, ee_y, dist_x, dist_y] →  4
-        lidar rays                    →  n_lidars * num_rays
+    Modes match EnvConfig.obs_mode:
+        "base"    — sin/cos(n_dof) + ee(2) + dist(2) + vels(n_dof)          = 2*n_dof+4+n_dof
+        "static"  — base + lidar(n_lidars*num_rays) + rel_pos(2*n_obstacles)
+        "dynamic" — static + obstacle velocities(2*n_obstacles)
     """
     n_dof = len(robot_cfg.link_lengths)
+    base = 2 * n_dof + 4 + n_dof  # sin+cos+ee+dist+vels
+    if obs_mode == "base":
+        return base
     n_lidars = n_dof * (int(lidar_cfg.lidar_joints) + int(lidar_cfg.lidar_midlinks))
-    return 2 * n_dof + 4 + n_lidars * lidar_cfg.num_rays + n_dof
+    lidar = n_lidars * lidar_cfg.num_rays
+    obs_pos = 2 * n_obstacles
+    if obs_mode == "static":
+        return base + lidar + obs_pos
+    # dynamic
+    return base + lidar + obs_pos * 2
 
 
 class Runner:
@@ -82,7 +95,7 @@ class Runner:
         self.progress_every = int(progress_every)
 
         self._fig: Optional[Any] = None
-        self._axes: Optional[Tuple[Any, Any, Any]] = None
+        self._axes: Optional[Tuple] = None
         self._win = 50  # windowed success-rate width
 
     # ------------------------------------------------------------------
@@ -234,18 +247,19 @@ class Runner:
             self._fig = plt.figure(figsize=(12, 12))
 
         if mode == "train":
-            # 4 rows × 2 cols; last row spans both columns for success rate
+            # 4 rows × 2 cols = 8 subplots
             from matplotlib.gridspec import GridSpec
 
             gs = GridSpec(4, 2, figure=self._fig, hspace=0.55, wspace=0.35)
             self._axes = (
                 self._fig.add_subplot(gs[0, 0]),  # ax1: total reward
-                self._fig.add_subplot(gs[0, 1]),  # ax2: steps/episode
-                self._fig.add_subplot(gs[1, 0]),  # ax3: KL divergence
-                self._fig.add_subplot(gs[1, 1]),  # ax4: sigma
-                self._fig.add_subplot(gs[2, 0]),  # ax5: collision rate
-                self._fig.add_subplot(gs[2, 1]),  # ax6: entropy
-                self._fig.add_subplot(gs[3, :]),  # ax7: success rate (full width)
+                self._fig.add_subplot(gs[0, 1]),  # ax2: applied torques
+                self._fig.add_subplot(gs[1, 0]),  # ax3: joint velocities
+                self._fig.add_subplot(gs[1, 1]),  # ax4: KL divergence
+                self._fig.add_subplot(gs[2, 0]),  # ax5: sigma
+                self._fig.add_subplot(gs[2, 1]),  # ax6: collision rate
+                self._fig.add_subplot(gs[3, 0]),  # ax7: entropy
+                self._fig.add_subplot(gs[3, 1]),  # ax8: success rate
             )
         else:
             self._axes = (
@@ -296,7 +310,7 @@ class Runner:
         assert self._axes is not None
 
         if mode == "train":
-            ax1, ax2, ax3, ax4, ax5, ax6, ax7 = self._axes
+            ax1, ax2, ax3, ax4, ax5, ax6, ax7, ax8 = self._axes
             for ax in self._axes:
                 ax.clear()
 
@@ -304,12 +318,13 @@ class Runner:
             r = np.asarray(m.get("total_reward", []), dtype=np.float32)
             s = np.asarray(m.get("success", []), dtype=np.float32)
             c = np.asarray(m.get("collision", []), dtype=np.float32)
-            steps = np.asarray(m.get("steps", []), dtype=np.float32)
             kl = np.asarray(m.get("kl_div", []), dtype=np.float32)
             entropy = np.asarray(m.get("entropy", []), dtype=np.float32)
             sigma0 = np.asarray(m.get("sigma_joint_0", []), dtype=np.float32)
             sigma1 = np.asarray(m.get("sigma_joint_1", []), dtype=np.float32)
             sigma2 = np.asarray(m.get("sigma_joint_2", []), dtype=np.float32)
+            step_torques = m.get("step_torques", [])
+            value_loss = np.asarray(m.get("value_loss", []), dtype=np.float32)
 
             # Row 0, Col 0: Total reward
             if r.size:
@@ -320,93 +335,91 @@ class Runner:
             ax1.tick_params(labelsize=11)
             ax1.grid(True, alpha=0.3)
 
-            # Row 0, Col 1: Steps/episode
-            if steps.size:
-                ax2.plot(*_downsample(steps), alpha=0.3, lw=0.5, color="#FF9800")
-                ax2.plot(*_downsample(_running_mean(steps, win)), lw=1.8, color="#E65100")
-            ax2.set_title(f"steps / episode (ma={win})", fontsize=14)
-            ax2.set_xlabel("episode", fontsize=12)
+            # Row 0, Col 1: Applied torques per step
+            _tau_colors = ["#FF5252", "#2196F3", "#4CAF50"]
+            for j, tau_j in enumerate(step_torques):
+                if tau_j:
+                    t_arr = np.asarray(tau_j, dtype=np.float32)
+                    ax2.plot(*_downsample(t_arr), lw=0.8, alpha=0.7,
+                             color=_tau_colors[j % len(_tau_colors)], label=f"joint_{j}")
+            ax2.set_title("applied torques per step", fontsize=14)
+            ax2.set_xlabel("step", fontsize=12)
             ax2.tick_params(labelsize=11)
+            ax2.legend(fontsize=10, loc="best")
             ax2.grid(True, alpha=0.3)
 
-            # Row 1, Col 0: KL divergence
-            if kl.size:
-                valid_kl = kl[~np.isnan(kl)]
-                if valid_kl.size > 0:
-                    ax3.plot(*_downsample(valid_kl), alpha=0.3, lw=0.5, color="#9C27B0")
-                    ax3.plot(*_downsample(_running_mean(valid_kl, win)), lw=1.8, color="#6A1B9A")
-            ax3.set_title(f"KL divergence (ma={win})", fontsize=14)
+            # Row 1, Col 0: Value loss
+            if value_loss.size:
+                valid_vl = value_loss[~np.isnan(value_loss)]
+                if valid_vl.size > 0:
+                    ax3.plot(*_downsample(valid_vl), alpha=0.3, lw=0.5, color="#E91E63")
+                    ax3.plot(*_downsample(_running_mean(valid_vl, win)), lw=1.8, color="#880E4F")
+            ax3.set_title(f"value loss (ma={win})", fontsize=14)
             ax3.set_xlabel("update", fontsize=12)
             ax3.tick_params(labelsize=11)
             ax3.grid(True, alpha=0.3)
 
-            # Row 1, Col 1: Sigma (all joints)
-            if sigma0.size:
-                valid_sigma0 = sigma0[~np.isnan(sigma0)]
-                if valid_sigma0.size > 0:
-                    ax4.plot(
-                        *_downsample(valid_sigma0),
-                        lw=1.2,
-                        color="#FF5252",
-                        label="joint_0",
-                        alpha=0.8,
-                    )
-            if sigma1.size:
-                valid_sigma1 = sigma1[~np.isnan(sigma1)]
-                if valid_sigma1.size > 0:
-                    ax4.plot(
-                        *_downsample(valid_sigma1),
-                        lw=1.2,
-                        color="#2196F3",
-                        label="joint_1",
-                        alpha=0.8,
-                    )
-            if sigma2.size:
-                valid_sigma2 = sigma2[~np.isnan(sigma2)]
-                if valid_sigma2.size > 0:
-                    ax4.plot(
-                        *_downsample(valid_sigma2),
-                        lw=1.2,
-                        color="#4CAF50",
-                        label="joint_2",
-                        alpha=0.8,
-                    )
-            ax4.set_title("sigma (policy std)", fontsize=14)
+            # Row 1, Col 1: KL divergence
+            if kl.size:
+                valid_kl = kl[~np.isnan(kl)]
+                if valid_kl.size > 0:
+                    ax4.plot(*_downsample(valid_kl), alpha=0.3, lw=0.5, color="#9C27B0")
+                    ax4.plot(*_downsample(_running_mean(valid_kl, win)), lw=1.8, color="#6A1B9A")
+            ax4.set_title(f"KL divergence (ma={win})", fontsize=14)
             ax4.set_xlabel("update", fontsize=12)
-            ax4.legend(fontsize=11, loc="best")
             ax4.tick_params(labelsize=11)
             ax4.grid(True, alpha=0.3)
 
-            # Row 2, Col 0: Collision rate
-            if c.size:
-                ax5.plot(*_downsample(_windowed_rate(c, self._win)), lw=1.8, color="#F44336")
-            ax5.set_ylim(-0.05, 1.05)
-            ax5.set_title(f"collision rate (window={self._win})", fontsize=14)
-            ax5.set_xlabel("episode", fontsize=12)
+            # Row 2, Col 0: Sigma (all joints)
+            if sigma0.size:
+                valid_sigma0 = sigma0[~np.isnan(sigma0)]
+                if valid_sigma0.size > 0:
+                    ax5.plot(*_downsample(valid_sigma0), lw=1.2, color="#FF5252",
+                             label="joint_0", alpha=0.8)
+            if sigma1.size:
+                valid_sigma1 = sigma1[~np.isnan(sigma1)]
+                if valid_sigma1.size > 0:
+                    ax5.plot(*_downsample(valid_sigma1), lw=1.2, color="#2196F3",
+                             label="joint_1", alpha=0.8)
+            if sigma2.size:
+                valid_sigma2 = sigma2[~np.isnan(sigma2)]
+                if valid_sigma2.size > 0:
+                    ax5.plot(*_downsample(valid_sigma2), lw=1.2, color="#4CAF50",
+                             label="joint_2", alpha=0.8)
+            ax5.set_title("sigma (policy std)", fontsize=14)
+            ax5.set_xlabel("update", fontsize=12)
+            ax5.legend(fontsize=11, loc="best")
             ax5.tick_params(labelsize=11)
             ax5.grid(True, alpha=0.3)
 
-            # Row 2, Col 1: Entropy
-            if entropy.size:
-                valid_entropy = entropy[~np.isnan(entropy)]
-                if valid_entropy.size > 0:
-                    ax6.plot(*_downsample(valid_entropy), alpha=0.3, lw=0.5, color="#607D8B")
-                    ax6.plot(
-                        *_downsample(_running_mean(valid_entropy, win)), lw=1.8, color="#455A64"
-                    )
-            ax6.set_title(f"entropy (ma={win})", fontsize=14)
-            ax6.set_xlabel("update", fontsize=12)
+            # Row 2, Col 1: Collision rate
+            if c.size:
+                ax6.plot(*_downsample(_windowed_rate(c, self._win)), lw=1.8, color="#F44336")
+            ax6.set_ylim(-0.05, 1.05)
+            ax6.set_title(f"collision rate (window={self._win})", fontsize=14)
+            ax6.set_xlabel("episode", fontsize=12)
             ax6.tick_params(labelsize=11)
             ax6.grid(True, alpha=0.3)
 
-            # Row 3, full width: Success rate
-            if s.size:
-                ax7.plot(*_downsample(_windowed_rate(s, self._win)), lw=2.0, color="#4CAF50")
-            ax7.set_ylim(-0.05, 1.05)
-            ax7.set_title(f"success rate (window={self._win})", fontsize=15, fontweight="bold")
-            ax7.set_xlabel("episode", fontsize=12)
+            # Row 3, Col 0: Entropy
+            if entropy.size:
+                valid_entropy = entropy[~np.isnan(entropy)]
+                if valid_entropy.size > 0:
+                    ax7.plot(*_downsample(valid_entropy), alpha=0.3, lw=0.5, color="#607D8B")
+                    ax7.plot(*_downsample(_running_mean(valid_entropy, win)), lw=1.8, color="#455A64")
+            ax7.set_title(f"entropy (ma={win})", fontsize=14)
+            ax7.set_xlabel("update", fontsize=12)
             ax7.tick_params(labelsize=11)
             ax7.grid(True, alpha=0.3)
+
+            # Row 3, Col 1: Success rate
+            if s.size:
+                ax8.plot(*_downsample(_windowed_rate(s, self._win)), lw=2.0, color="#4CAF50")
+            ax8.set_ylim(-0.05, 1.05)
+            ax8.set_title(f"success rate (window={self._win})", fontsize=14, fontweight="bold")
+            ax8.set_xlabel("episode", fontsize=12)
+            ax8.tick_params(labelsize=11)
+            ax8.grid(True, alpha=0.3)
 
         else:  # test
             ax1, ax2, ax3 = self._axes
@@ -417,7 +430,7 @@ class Runner:
             m = self.model.get_test_metrics()
             s = np.asarray(m.get("success", []), dtype=np.float32)
             coll = np.asarray(m.get("collision", []), dtype=np.float32)
-            steps = np.asarray(m.get("steps", []), dtype=np.float32)
+            angle_error = np.asarray(self.model.get_train_metrics().get("angle_error", []), dtype=np.float32)
 
             if s.size:
                 ax1.plot(np.cumsum(s) / np.arange(1, s.size + 1), lw=1.8, color="#4CAF50")
@@ -435,9 +448,9 @@ class Runner:
             ax2.tick_params(labelsize=11)
             ax2.grid(True, alpha=0.3)
 
-            if steps.size:
-                ax3.plot(steps, color="#FF9800", lw=0.8)
-            ax3.set_title("steps / episode", fontsize=14)
+            if angle_error.size:
+                ax3.plot(*_downsample(angle_error), color="#FF9800", lw=0.8)
+            ax3.set_title("angle error ||q_target - q||", fontsize=14)
             ax3.set_xlabel("episode", fontsize=12)
             ax3.tick_params(labelsize=11)
             ax3.grid(True, alpha=0.3)

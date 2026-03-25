@@ -12,14 +12,13 @@ class RobotConfig:
         return (np.pi, np.pi, np.pi)
 
     base_xy: Tuple[float, float] = (400, 600)
-    link_lengths: Tuple[float, ...] = (100, 70, 40)
-    masses: Tuple[float, ...] = (1.0, 0.7, 0.4)
-    Kp: Tuple[float, ...] = (40.0, 30.0, 20.0)
-    Kd: Tuple[float, ...] = (10.0, 5, 3)
+    link_lengths: Tuple[float, ...] = (90, 70, 40)
+    masses: Tuple[float, ...] = (1.0, 0.7, 0.6)
     wrap_angles: bool = True
-    dtheta_max: Optional[float] = 0.2
+    tau_limits: Tuple[float, ...] = (12.0, 8.0, 8.0)
     initial_thetas: Optional[Tuple[float, ...]] = field(default_factory=theta_default)
-    randomize_theta: bool = True
+    randomize_theta: bool = False
+    theta_jitter: float = 0.15   # rad, applied when randomize_theta=False
 
 
 @dataclass(frozen=True)
@@ -35,57 +34,70 @@ class ObstacleConfig:
 
     @staticmethod
     def _default_obs() -> List:
-        return [[200, 600]]#, [600, 600], [400, 800], [400, 400]]
+        return [[200, 600], [600, 600]]#, [400, 800], [400, 400]]
 
     positions: List[List[float]] = field(default_factory=_default_obs)
-    radius: float = 50.0
-    jitter_radius: float = 40.0
+    radius: float = 30.0
+    jitter_radius: float = 30.0
     random: bool = True
-    dynamic: bool = False
+    dynamic: bool = True
+    ellipse_a: float = 80.0   # semi-axis x (px)
+    ellipse_b: float = 60.0   # semi-axis y (px)
+    omega: float = 0.1        # angular frequency (rad/s)
 
 
 @dataclass
 class ModelConfig:
     gamma: float = 0.97
+    gae_lambda: float = 0.95
     lr_start: float = 3e-4
     lr_min: float = 1e-6
     grad_clip_norm: float = 1.0
     hidden_sizes: Tuple[int, ...] = (256, 128)
-    log_std_min: float = -3.0
-    log_std_max: float = -1.0
-    entropy_coef: float = 0.01
-    target_kl: float = 0.015
-    clip_epsilon: float = 0.15
+    log_std_min: float = -3
+    log_std_max: float = -0.7
+    damping: float = 1
+    entropy_coef: float = 0.002
+    value_loss_coef: float = 0.1   # coefficient on value loss; kept at 0.5 because TD targets are normalized
+    target_kl: float = 0.15
+    clip_epsilon: float = 0.2
     ppo_epochs: int = 10
-    mini_batch_size: int = 256
+    mini_batch_size: int = 512
     batch_size_limit: int = 2048
 
 
 @dataclass
 class RewardConfig:
-    progress_scale: float = 0.5
-    progress_near_boost: float = 3.0
-    progress_boost_radius: float = 80.0
-    step_penalty: float = 0.005
-    goal_reward: float = 100.0
-    fail_penalty: float = 15.0
-    obstacle_danger_threshold: float = 0.4
-    obstacle_danger_penalty: float = 0.2
-    collision_penalty: float = 30.0
-    stagnation_window: int = 15
-    stagnation_thresh: float = 1.0
+    progress_scale: float = 0.9
+    progress_near_boost: float = 0.2
+    progress_boost_radius: float = 60.0
+    step_penalty: float = 0.08
+    goal_reward: float = 80.0
+    fail_penalty: float = 40.0
+    obstacle_danger_threshold: float = 0.7
+    obstacle_danger_penalty: float = 2
+    collision_penalty: float = 60.0
+    stagnation_window: int = 100
+    stagnation_thresh: float = 0
+    vel_penalty: float = 0.08
+    torque_penalty: float = 0.05
 
 
 @dataclass
 class EnvConfig:
-    target_xy: Tuple[float, float] = (250, 300.0)
-    randomize_target: bool = True
+    target_xy: Tuple[float, float] = (700, 600.0)
+    randomize_target: bool = False
     target_thresh: float = 30.0
-    max_steps: int = 400
-    forbid_link_target_intersection: bool = True
+    max_steps: int = 600
+    forbid_link_target_intersection: bool = False  # too many spurious failures early in training
     target_point_radius: float = 1.0
     min_target_distance_from_ee: float = 0.0
     target_line_of_sight: bool = False
+    # Curriculum observation modes:
+    #   "base"    — 13 dims: sin/cos/ee/dist/vels (no lidar, no obstacles)
+    #   "static"  — 41 dims: base + lidar(24) + obstacle rel positions (2 per obs)
+    #   "dynamic" — 45 dims: base + lidar(24) + obstacle rel pos + velocity (4 per obs)
+    obs_mode: str = "dynamic"
 
 
 @dataclass

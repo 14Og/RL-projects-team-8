@@ -36,17 +36,13 @@ class Robot:
 
         self.physics = Robot_Dynamic_3DOF(
             masses=np.array(self.cfg.masses),
-            lengthes=np.array(self.cfg.link_lengths) / 100.0
+            lengthes=np.array(self.cfg.link_lengths) / 200.0
         )
 
         if theta is not None:
             self.set_theta(theta)
 
         self._dq = np.zeros(self.n_dof, dtype=float)
-        self._q_target = self._theta.copy()
-
-        self.Kp = np.array(self.cfg.Kp)
-        self.Kd = np.array(self.cfg.Kd)
 
     @property
     def theta(self) -> np.ndarray:
@@ -108,11 +104,15 @@ class Robot:
     ) -> State:
         if not randomize:
             if self.cfg.initial_thetas is not None:
-                self._theta[:] = np.array(self.cfg.initial_thetas, dtype=float)[: self.n_dof]
+                jitter = self.rng.uniform(
+                    -self.cfg.theta_jitter, self.cfg.theta_jitter, size=self.n_dof
+                )
+                self._theta[:] = np.array(self.cfg.initial_thetas, dtype=float)[: self.n_dof] + jitter
             else:
                 self._theta[:] = 0.0
             if self.cfg.wrap_angles:
                 self._theta = np.array([self.wrap_angle(t) for t in self._theta], dtype=float)
+            self._dq = np.zeros(self.n_dof, dtype=float)
             return self.obs()
 
         obstacles = self._lidar_manager._obstacles
@@ -158,7 +158,6 @@ class Robot:
 
   
         self._dq = np.zeros(self.n_dof, dtype=float)
-        self._q_target = self._theta.copy()
         return self.obs()
 
     @staticmethod
@@ -182,47 +181,26 @@ class Robot:
             theta = np.array([self.wrap_angle(float(t)) for t in theta], dtype=float)
         self._theta = theta
 
-    def physics_step(self, dt: float):
-        # 1. Compute the error between current angles and target angles, with proper wrapping
-        error = (self._q_target - self._theta + np.pi) % (2 * np.pi) - np.pi
-        
-        # 2.get gravity vector from physics model
+    def step(self, tau: np.ndarray) -> Tuple[State, np.ndarray]:
+        tau = np.asarray(tau, dtype=float).reshape(self.n_dof)
+        limits = np.array(self.cfg.tau_limits, dtype=float)
+        tau = np.clip(tau, -limits, limits)
         _, G = self.physics.get_matrices(self._theta)
-        
-        # 3. PD-control to compute torques, with gravity compensation
-        tau = self.Kp * error - self.Kd * self._dq + G
-        tau = np.clip(tau, -50, 50) # torque limits for numerical stability
-        #print(f"tau: {tau}, error: {error}")
-        
-        # 4. RK4 update of the robot state using the physics model
-        self._theta, self._dq = self.physics.update_rk4(self._theta, self._dq, tau, dt)
-        
-        # 5. Обязательная нормализация углов
-        self._theta = np.array([self.wrap_angle(t) for t in self._theta], dtype=float)
+        tau = tau + G
+        #print(f"Applied torques (without gravity compensation): {tau}")
 
-    def step(self, dtheta: np.ndarray) -> Tuple[State, np.ndarray]:
-        dtheta = np.asarray(dtheta, dtype=float).reshape(self.n_dof)
-        if self.cfg.dtheta_max is not None:
-            dtheta = self.clip_dtheta(dtheta, self.cfg.dtheta_max)
+        dt_phys = 0.0001 * 5
+        n_substeps = int(100 / 5)
 
-        self._q_target += dtheta
-        self._q_target = np.array([self.wrap_angle(t) for t in self._q_target], dtype=float)
-        
-        dt_phys = 0.001
-        n_substeps = 10 
-        
         for _ in range(n_substeps):
-            self.physics_step(dt_phys)
+            self._theta, self._dq = self.physics.update_rk4(self._theta, self._dq, tau, dt_phys)
+            self._theta = np.array([self.wrap_angle(t) for t in self._theta], dtype=float)
 
-        return self.obs(), dtheta
+        return self.obs(), tau
 
     @staticmethod
     def wrap_angle(theta: float) -> float:
         return (theta + math.pi) % (2 * math.pi) - math.pi
-
-    @staticmethod
-    def clip_dtheta(dtheta: np.ndarray, max_dtheta: float) -> np.ndarray:
-        return np.clip(dtheta, -max_dtheta, max_dtheta)
 
 
 if __name__ == "__main__":

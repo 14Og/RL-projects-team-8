@@ -17,8 +17,8 @@ class GaussianMLPPolicy(nn.Module):
         self.cfg = cfg
         layers: list[nn.Module] = []
         in_dim = obs_dim
-        print("Hello world")
         print(f"Building policy network with obs_dim={obs_dim}, act_dim={act_dim}, hidden_sizes={self.cfg.hidden_sizes}")
+        print("model_actor_critic_without_ppo")
         for h in self.cfg.hidden_sizes:
             layers.append(nn.Linear(in_dim, h))
             layers.append(nn.ReLU())
@@ -106,7 +106,6 @@ class Model:
             "sigma_joint_1": [],
             "sigma_joint_2": [],
             "entropy": [],
-            "angle_error": [],
         }
 
         self.test: Dict[str, List[float]] = {
@@ -155,8 +154,7 @@ class Model:
         return self.buffer_step_count >= self.cfg.batch_size_limit
 
     def finish_episode(
-        self, *, success: bool, collision: bool = False, final_distance: Optional[float] = None,
-        angle_error: Optional[float] = None,
+        self, *, success: bool, collision: bool = False, final_distance: Optional[float] = None
     ) -> Dict[str, float]:
         total_reward = float(sum(self._rewards))
 
@@ -177,18 +175,15 @@ class Model:
                 "sigma_joint_1": float("nan"),
                 "sigma_joint_2": float("nan"),
                 "entropy": float("nan"),
-                "angle_error": float(angle_error) if angle_error is not None else float("nan"),
             }
             self._append_train(metrics)
             return metrics
 
-        returns = self._discounted_returns(self._rewards, self.cfg.gamma).to(self.device)
-        episode_return = float(returns[0].item())
-
         self.buffer_states.extend(self._states)
         self.buffer_actions.extend(self._actions)
         self.buffer_log_probs.extend(self._log_probs)
-        self.buffer_rewards.extend(returns.tolist())
+        self.buffer_rewards.extend(self._rewards)  # raw rewards for TD bootstrap
+        self.buffer_terminals.extend([False] * (len(self._rewards) - 1) + [True])
         self.buffer_step_count += len(self._rewards)
         self.buffer_values.extend(self._values)
 
@@ -206,7 +201,6 @@ class Model:
             "sigma_joint_1": float("nan"),
             "sigma_joint_2": float("nan"),
             "entropy": float("nan"),
-            "angle_error": float(angle_error) if angle_error is not None else float("nan"),
         }
 
         if self.should_update():
@@ -229,89 +223,44 @@ class Model:
     def _update_ppo(self) -> Dict[str, float]:
         b_states = torch.stack(self.buffer_states).detach().to(self.device)
         b_actions = torch.stack(self.buffer_actions).detach().to(self.device)
-        b_log_probs = torch.stack(self.buffer_log_probs).detach().to(self.device)
-        b_returns = torch.tensor(self.buffer_rewards, dtype=torch.float32).to(self.device)
+        b_rewards = torch.tensor(self.buffer_rewards, dtype=torch.float32).to(self.device)
+        b_dones = torch.tensor(self.buffer_terminals, dtype=torch.float32).to(self.device)
 
+        # TD(0) bootstrap: target = r + γ * V(s') * (1 - done)
         with torch.no_grad():
-            _, _, b_values = self.policy(b_states)
-            b_values = b_values.squeeze(-1)
-            advantages = b_returns - b_values
+            next_states = torch.cat([b_states[1:], b_states[-1:]], dim=0)
+            next_values = self.policy(next_states)[2].squeeze(-1)
+            b_values = self.policy(b_states)[2].squeeze(-1)
+            targets = b_rewards + self.cfg.gamma * next_values * (1.0 - b_dones)
+            advantages = targets - b_values
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        batch_size = b_states.shape[0]
-        mbs = min(self.cfg.mini_batch_size, batch_size)
-        eps = self.cfg.clip_epsilon
+        mu, sigma, values = self.policy(b_states)
+        values = values.squeeze(-1)
+        dist = Normal(mu, sigma)
+        new_log_probs = dist.log_prob(b_actions).sum(dim=-1)
 
-        epoch_losses = []
-        epoch_kls = []
-        grad_norms = []
-        epoch_entropies = []
-        final_sigmas = None
+        policy_loss = -(new_log_probs * advantages).mean()
+        value_loss = nn.functional.mse_loss(values, targets)
+        entropy = dist.entropy().sum(dim=-1).mean()
+        loss = policy_loss + 0.5 * value_loss - self.cfg.entropy_coef * entropy
 
-        for _ in range(self.cfg.ppo_epochs):
-            with torch.no_grad():
-                mu_full, sigma_full, values_full = self.policy(b_states)
-                dist_full = Normal(mu_full, sigma_full)
-                new_lp_full = dist_full.log_prob(b_actions).sum(dim=-1)
-                log_ratio_full = new_lp_full - b_log_probs
-                ratio_full = torch.exp(log_ratio_full)
-                approx_kl = ((ratio_full - 1) - log_ratio_full).mean().item()
-                epoch_kls.append(approx_kl)
-                final_sigmas = sigma_full.mean(dim=0).cpu().numpy()
-                epoch_entropies.append(dist_full.entropy().sum(dim=-1).mean().item())
-
-            if approx_kl > self.cfg.target_kl:
-                break
-
-            indices = torch.randperm(batch_size, device=self.device)
-            for start in range(0, batch_size, mbs):
-                mb_idx = indices[start : start + mbs]
-                mb_states = b_states[mb_idx]
-                mb_actions = b_actions[mb_idx]
-                mb_log_probs = b_log_probs[mb_idx]
-                mb_advantages = advantages[mb_idx]
-                mb_returns = b_returns[mb_idx]
-
-                mu, sigma, values = self.policy(mb_states)
-                values = values.squeeze(-1) 
-
-                dist = Normal(mu, sigma)
-                new_log_probs = dist.log_prob(mb_actions).sum(dim=-1)
-
-                log_ratio = new_log_probs - mb_log_probs
-                ratio = torch.exp(log_ratio)
-
-                surr1 = ratio * mb_advantages
-                surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * mb_advantages
-                policy_loss = -torch.min(surr1, surr2).mean()
-                value_loss = nn.functional.mse_loss(values, mb_returns)
-
-                entropy = dist.entropy().sum(dim=-1).mean()
-                loss = policy_loss + 0.5 * value_loss - self.cfg.entropy_coef * entropy
-
-                self.optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    self.policy.parameters(), self.cfg.grad_clip_norm
-                )
-                self.optimizer.step()
-
-                epoch_losses.append(loss.item())
-                grad_norms.append(grad_norm.item() if hasattr(grad_norm, "item") else grad_norm)
-
+        self.optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.cfg.grad_clip_norm)
+        self.optimizer.step()
         self.scheduler.step()
-        
-        #print(final_sigmas)
-        sigmas_per_joint = final_sigmas if final_sigmas is not None else np.zeros(3)
+
+        sigmas_per_joint = sigma.mean(dim=0).detach().cpu().numpy()
         return {
-            "loss": float(np.mean(epoch_losses)) if epoch_losses else float("nan"),
-            "grad_norm": float(np.mean(grad_norms)) if grad_norms else float("nan"),
-            "kl_div": float(np.mean(epoch_kls)) if epoch_kls else float("nan"),
+            "loss": loss.item(),
+            "grad_norm": grad_norm.item() if hasattr(grad_norm, "item") else float(grad_norm),
+            "kl_div": float("nan"),
             "sigma_mean": float(sigmas_per_joint.mean()),
             "sigma_joint_0": float(sigmas_per_joint[0]),
             "sigma_joint_1": float(sigmas_per_joint[1]),
             "sigma_joint_2": float(sigmas_per_joint[2]),
-            "entropy": float(np.mean(epoch_entropies)) if epoch_entropies else float("nan"),
+            "entropy": entropy.item(),
         }
 
     def record_test_episode(

@@ -18,21 +18,38 @@ def parse_args() -> ap.Namespace:
     p.add_argument("--train-episodes", type=int, default=None)
     p.add_argument("--test-episodes", type=int, default=None)
     p.add_argument("--seed", type=int, default=42)
+
+    # Fine-tuning: load pre-trained weights before starting training
+    p.add_argument(
+        "--finetune", type=str, default=None, metavar="WEIGHTS_PATH",
+        help="Load policy weights from this file before training (e.g. policy/best_policy_const.pt)."
+    )
+
+    # Curriculum flags: override config defaults from the command line
+    p.add_argument("--randomize-target", action="store_true",
+                   help="Randomise the target position each episode.")
+    p.add_argument("--randomize-theta", action="store_true",
+                   help="Randomise the initial joint angles each episode.")
+
     return p.parse_args()
 
 
-def _build_model(args, robot_cfg, lidar_cfg, model_cfg, gui_cfg, env_cfg):
+def _build_model(args, robot_cfg, lidar_cfg, model_cfg, gui_cfg, env_cfg, obstacle_cfg):
     """Construct a PPO Model."""
     from ppo.runner import compute_obs_dim
-    from ppo.model_actor_critic import Model
+    from ppo.model_actor_critic_ppo import Model
 
-    obs_dim = compute_obs_dim(robot_cfg, lidar_cfg)
+    obs_dim = compute_obs_dim(
+        robot_cfg, lidar_cfg,
+        obs_mode=env_cfg.obs_mode,
+        n_obstacles=len(obstacle_cfg.positions),
+    )
     return Model(
         obs_dim=obs_dim,
         act_dim=len(robot_cfg.link_lengths),
         cfg=model_cfg,
         max_steps=env_cfg.max_steps,
-        action_limit=robot_cfg.dtheta_max,
+        action_limit=robot_cfg.tau_limits,
         train_episodes=gui_cfg.train_episodes,
     )
 
@@ -41,8 +58,8 @@ def main() -> None:
 
     args = parse_args()
 
-    robot_cfg    = RobotConfig()
-    env_cfg      = EnvConfig()
+    robot_cfg    = RobotConfig(randomize_theta=args.randomize_theta)
+    env_cfg      = EnvConfig(randomize_target=args.randomize_target)
     rew_cfg      = RewardConfig()
     gui_cfg      = GUIConfig()
     model_cfg    = ModelConfig()
@@ -53,7 +70,12 @@ def main() -> None:
     gui_cfg.test_episodes  = args.test_episodes  or gui_cfg.test_episodes
     gui_cfg.model_path     = args.model_path     or gui_cfg.model_path
 
-    model = _build_model(args, robot_cfg, lidar_cfg, model_cfg, gui_cfg, env_cfg)
+    model = _build_model(args, robot_cfg, lidar_cfg, model_cfg, gui_cfg, env_cfg, obstacle_cfg)
+
+    if args.finetune:
+        print(f"[finetune] loading weights from {args.finetune}", flush=True)
+        model.load(args.finetune, load_optimizer=False)
+        print("[finetune] weights loaded — starting training with randomized curriculum", flush=True)
 
     from ppo.runner import Runner
 

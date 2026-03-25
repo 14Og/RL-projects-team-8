@@ -118,21 +118,35 @@ class PygameRenderer:
         joints: np.ndarray = render["joints"]  # (n+1, 2)
         target: np.ndarray = render["target"]  # (2,)
         obstacles: List[Dict] = render.get("obstacles", [])
+        H = self.cfg.window_size[1]
 
-        # Obstacles
+        def fy(y: float) -> int:
+            return H - int(y)
+
+        # Obstacles + danger zones
+        danger_zone_px = int(render.get("danger_zone_px", 0))
         for obs in obstacles:
             cx = int(obs["center"][0])
-            cy = int(obs["center"][1])
+            cy = fy(obs["center"][1])
             r = int(obs["radius"])
+
+            # Danger zone: semi-transparent orange ring
+            if danger_zone_px > 0:
+                dz_r = r + danger_zone_px
+                dz_surf = pygame.Surface((dz_r * 2, dz_r * 2), pygame.SRCALPHA)
+                pygame.draw.circle(dz_surf, (255, 160, 0, 50), (dz_r, dz_r), dz_r)
+                pygame.draw.circle(dz_surf, (255, 160, 0, 120), (dz_r, dz_r), dz_r, 2)
+                self.screen.blit(dz_surf, (cx - dz_r, cy - dz_r))
+
             pygame.draw.circle(self.screen, (180, 100, 100), (cx, cy), r)
             pygame.draw.circle(self.screen, (140, 55, 55), (cx, cy), r, 2)
 
-        pts = [(int(joints[i, 0]), int(joints[i, 1])) for i in range(joints.shape[0])]
+        pts = [(int(joints[i, 0]), fy(joints[i, 1])) for i in range(joints.shape[0])]
         pygame.draw.lines(self.screen, (50, 50, 50), False, pts, 6)
 
         for p in pts:
             pygame.draw.circle(self.screen, (80, 80, 80), p, 8)
-        tx, ty = int(target[0]), int(target[1])
+        tx, ty = int(target[0]), fy(target[1])
         pygame.draw.circle(self.screen, (220, 50, 50), (tx, ty), 6)
         pygame.draw.circle(
             self.screen,
