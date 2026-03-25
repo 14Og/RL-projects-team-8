@@ -167,39 +167,43 @@ Loss used in code:
 
 ## Development History
 
-### Iteration 1 - Base Actor-Critic + PPO
+### Milestone 1 - Base Actor-Critic + PPO
 
-Implemented shared trunk with heads for `mu(s)`, `sigma(s)`, and `V(s)`, Gaussian policy, PPO clipping, entropy bonus, and KL early stopping.
+- Implemented shared backbone with heads `mu(s)`, `sigma(s)`, `V(s)`
+- Added Gaussian policy and log-likelihood computation
+- Implemented trajectory buffer, PPO clipping, value loss, entropy bonus
+- Added KL monitoring and early stopping by `target_kl`
 
-### Iteration 2 - Transition to TD + GAE
+### Milestone 2 - Transition to TD + GAE
 
-Critic training switched to TD targets; actor training switched to GAE advantages with batch normalization.
+- Switched critic learning to TD targets: `r + gamma * V(s')`
+- Implemented GAE recursion for actor advantages
+- Added batch normalization of advantages
 
-### Iteration 3 - Realistic Dynamics + Pure Torque Control
+### Milestone 3 - Realistic Physics and Pure Torque Control
 
-Control migrated from a PD-assisted setup to direct torque control with manipulator dynamics:
+- Removed PD-assist layer and switched to direct torque control
+- Added manipulator dynamics terms: inertia, Coriolis, gravity
+- Added gravity compensation in control signal
 
-- inertia matrix
-- Coriolis terms
-- gravity vector
+### Milestone 4 - Stabilizing Sigma and Losses
 
-Also added gravity compensation in applied torque, which stabilized learning.
+- Diagnosed KL spikes and overly aggressive PPO truncation
+- Tracked `policy_loss`, `value_loss`, and `entropy` separately
+- Normalized/rescaled value targets to prevent `value_loss` domination
+- Stabilized KL and enabled meaningful `sigma` decay during learning
 
-### Iteration 4 - Sigma and Loss Stabilization
+### Milestone 5 - From Static Configuration to Dynamic Tasks
 
-Observed unstable behavior around exploration scale (`sigma`) and KL spikes. Resolution steps:
+- Static-stage training reached high success but overfit to one setup
+- Extended state with obstacle positions and velocities
+- Moved to training directly on moving targets/obstacles for better generalization
 
-1. Added explicit KL tracking during PPO epochs
-2. Tracked `policy_loss`, `value_loss`, `entropy` separately
-3. Rescaled/normalized value targets to avoid `value_loss` dominating updates
+### Milestone 6 - Final Integration (planned)
 
-### Iteration 5 - Curriculum to Dynamic Tasks
-
-Static-target stage reached high success but overfit. Then training moved to dynamic scenarios by extending state with obstacle positions/velocities and training on moving setups.
-
-### Iteration 6 - Final Integration (planned)
-
-Planned formalization as one block: `PPO + TD + GAE + manipulator dynamics`, with unified reporting over reward/success/episode length/KL/sigma/loss components.
+- Formalize unified pipeline: `PPO + TD + GAE + manipulator physics`
+- Consolidate report metrics: reward, success, episode length, sigma, KL, loss components
+- Finalize structured write-up sections: Methods, Experiments, Results, Limitations
 
 ### Visual Milestones
 
