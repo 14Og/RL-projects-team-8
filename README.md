@@ -137,6 +137,65 @@ Current training uses Actor-Critic PPO (`ppo/model_actor_critic_ppo.py`):
 - KL-based early stop for PPO epochs
 - TD targets for critic: `r_t + gamma * V(s_{t+1}) * (1 - done_t)`
 
+### Policy / Critic Parameterization
+
+For state embedding `z = f_theta(s)`:
+
+- `mu(s) = tanh(W_mu z + b_mu) * tau_max`
+- `V(s) = W_v z + b_v`
+- `log_sigma = clamp(log_std, log_std_min, log_std_max)`
+- `sigma = exp(log_sigma) * tau_max`
+
+Policy distribution:
+
+- `pi_theta(a|s) = Normal(mu(s), sigma)`
+- `log pi_theta(a_t|s_t) = sum_i log Normal(a_{t,i}; mu_i, sigma_i)`
+
+### TD Targets and GAE
+
+- `target_t = r_t + gamma * V(s_{t+1}) * (1 - done_t)`
+- `delta_t = r_t + gamma * V(s_{t+1}) * (1 - done_t) - V(s_t)`
+- `A_t = delta_t + gamma * lambda * (1 - done_t) * A_{t+1}`
+- `A_t <- (A_t - mean(A)) / (std(A) + eps)`
+
+### PPO Objectives
+
+Likelihood ratio:
+
+- `r_t(theta) = exp(log pi_theta(a_t|s_t) - log pi_{old}(a_t|s_t))`
+
+Clipped surrogate for actor:
+
+- `L_clip = E[min(r_t * A_t, clip(r_t, 1-eps, 1+eps) * A_t)]`
+
+Critic loss (in code with normalized targets per mini-batch):
+
+- `L_value = MSE(V_norm(s_t), target_norm_t)`
+
+Entropy bonus:
+
+- `H = E[sum_i H(Normal(mu_i, sigma_i))]`
+
+Total minimized loss in code:
+
+- `loss = -L_clip + value_loss_coef * L_value - entropy_coef * H`
+
+KL control (approximation used in code):
+
+- `D_KL ~= E[(r_t - 1) - log r_t]`
+
+If `D_KL > target_kl`, PPO epoch loop is stopped early.
+
+### How Sigma Is Updated
+
+Current implementation uses **global trainable `log_std`** (`nn.Parameter` of size 3), not a separate sigma head per state.
+
+- `log_std` is optimized jointly with all policy parameters by Adam during PPO backpropagation.
+- It is constrained every forward pass by `clamp(log_std_min, log_std_max)`.
+- Effective exploration scale per joint is:
+  - `sigma_j = exp(clamp(log_std_j)) * tau_max_j`
+- So sigma changes only through gradient updates from PPO loss (policy term + entropy term), with no manual sigma decay schedule.
+
 ### Why Actor-Critic PPO
 
 Compared to policy-gradient-only variants, current implementation:
@@ -167,43 +226,59 @@ Loss used in code:
 
 ## Development History
 
-### Milestone 1 - Base Actor-Critic + PPO
+### Iteration 1 - Base actor-critic + MC + PPO clip
 
-- Implemented shared backbone with heads `mu(s)`, `sigma(s)`, `V(s)`
-- Added Gaussian policy and log-likelihood computation
-- Implemented trajectory buffer, PPO clipping, value loss, entropy bonus
-- Added KL monitoring and early stopping by `target_kl`
+Started from a basic setup: one network outputs `mu`, `sigma`, and `V(s)`, actions sampled from Gaussian policy, Monte Carlo returns for advantages (`A = R - V`), PPO clipped objective with value loss and entropy.
 
-### Milestone 2 - Transition to TD + GAE
+### Iteration 2 - From pure MC to TD + GAE
 
-- Switched critic learning to TD targets: `r + gamma * V(s')`
-- Implemented GAE recursion for actor advantages
-- Added batch normalization of advantages
+Pure MC produced noisy targets and unstable learning. Replaced with TD targets for critic (`r + gamma * V(s')`) and GAE for actor advantages, then normalized advantages per batch.
 
-### Milestone 3 - Realistic Physics and Pure Torque Control
+### Iteration 3 - Understanding PPO role and KL early stopping tuning
 
-- Removed PD-assist layer and switched to direct torque control
-- Added manipulator dynamics terms: inertia, Coriolis, gravity
-- Added gravity compensation in control signal
+Kept PPO clip as protection from destructive policy jumps and added KL-based early stopping. Initial KL threshold was too strict, so updates often ended after the first epoch.
 
-### Milestone 4 - Stabilizing Sigma and Losses
+### Iteration 4 - From toy physics to manipulator dynamics
 
-- Diagnosed KL spikes and overly aggressive PPO truncation
-- Tracked `policy_loss`, `value_loss`, and `entropy` separately
-- Normalized/rescaled value targets to prevent `value_loss` domination
-- Stabilized KL and enabled meaningful `sigma` decay during learning
+Moved from simplified setup to realistic 3-link dynamics with inertia matrix, Coriolis terms, and gravity vector.
 
-### Milestone 5 - From Static Configuration to Dynamic Tasks
+### Iteration 5 - External PD stage and transition to pure torque control
 
-- Static-stage training reached high success but overfit to one setup
-- Extended state with obstacle positions and velocities
-- Moved to training directly on moving targets/obstacles for better generalization
+Used an external PD stage temporarily (policy produced target angles, PD converted them to torques). After review, removed PD from control loop to keep pure RL torque control.
 
-### Milestone 6 - Final Integration (planned)
+### Iteration 6 - Gravity compensation and final loss form
 
-- Formalize unified pipeline: `PPO + TD + GAE + manipulator physics`
-- Consolidate report metrics: reward, success, episode length, sigma, KL, loss components
-- Finalize structured write-up sections: Methods, Experiments, Results, Limitations
+Added gravity compensation term to applied torques to avoid wasting learning capacity on static gravity balancing. Training stabilized. Settled on:
+
+`loss = policy_loss + value_loss_coef * value_loss - entropy_coef * entropy`
+
+### Iteration 7 - Non-learning sigma and failed fixes
+
+Observed sigma not adapting properly. Tried global sigma vector and manual sigma decay; manual decay caused KL explosions and aggressive early stopping.
+
+### Iteration 8 - KL diagnostics and loss-scale analysis
+
+Added deeper diagnostics: KL, `policy_loss`, `value_loss`, and entropy tracking. Found strong scale imbalance where `value_loss` dominated updates.
+
+### Iteration 9 - Value normalization and sigma recovery
+
+Normalized/scaled value targets and tuned value-loss influence. After balancing losses, sigma started decreasing naturally and KL behavior became more stable.
+
+### Iteration 10 - Curriculum: static-target stage
+
+Introduced a fixed-target setup with up to 600 steps/episode. Agent reached near-100% success in this static scenario.
+
+### Iteration 11 - Overfitting to one configuration
+
+Transferred static-stage weights poorly to random targets. Policy overfit to one geometry and did not generalize.
+
+### Iteration 12 - Transition to moving targets and obstacles
+
+Expanded state with obstacle positions and velocities. Switched to training directly in dynamic scenarios instead of long static pretraining.
+
+### Iteration 13 - Working behavior in dynamic scenes
+
+This version became the practical one: harder training but meaningful behavior in non-stationary scenes, with obstacle-aware motion and consistent target reaching.
 
 ### Visual Milestones
 
