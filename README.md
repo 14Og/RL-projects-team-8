@@ -1,6 +1,6 @@
 # Actor-Critic PPO - 3-DOF Planar Manipulator with Dynamic Obstacle Avoidance
 
-Training a three-link planar manipulator with LIDAR-like perception to reach target points while avoiding moving obstacles, using an Actor-Critic policy optimized with PPO updates.
+Training a three-link planar manipulator with LIDAR-like perception using Actor-Critic PPO + TD + GAE, with curriculum from static tasks to dynamic targets/obstacles and full torque-level control.
 
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
 
@@ -10,6 +10,8 @@ Training a three-link planar manipulator with LIDAR-like perception to reach tar
 
 A three-link (3-DOF) planar manipulator is mounted on a fixed base.
 The policy controls joint torques and must move the end-effector to a target while avoiding circular obstacles that can move over time.
+
+Project workflow (per report): training started from simpler static setups and then moved to dynamic scenarios (moving targets/obstacles) to improve generalization.
 
 | Property | Value |
 |---|---|
@@ -133,6 +135,7 @@ Current training uses Actor-Critic PPO (`ppo/model_actor_critic_ppo.py`):
 - PPO clipped objective + value loss + entropy regularization
 - GAE (`gae_lambda = 0.95`) for advantage estimation
 - KL-based early stop for PPO epochs
+- TD targets for critic: `r_t + gamma * V(s_{t+1}) * (1 - done_t)`
 
 ### Why Actor-Critic PPO
 
@@ -156,54 +159,49 @@ Compared to policy-gradient-only variants, current implementation:
 6. Step cosine annealing scheduler
 7. Clear batch buffer
 
+Loss used in code:
+
+`loss = policy_loss + value_loss_coef * value_loss - entropy_coef * entropy`
+
 ---
 
 ## Development History
 
-### Iteration 1 - LIDAR Integration
+### Iteration 1 - Base Actor-Critic + PPO
 
-Added a joint-based multi-lidar system (3 sensors x 8 rays) to expose obstacle proximity in observation.
+Implemented shared trunk with heads for `mu(s)`, `sigma(s)`, and `V(s)`, Gaussian policy, PPO clipping, entropy bonus, and KL early stopping.
 
-<p align="center">
-  <img src="assets/lidars.gif" alt="LIDAR perception" width="400">
-</p>
+### Iteration 2 - Transition to TD + GAE
 
-### Iteration 2 - Obstacle Avoidance Curriculum
+Critic training switched to TD targets; actor training switched to GAE advantages with batch normalization.
 
-Training started in simpler layouts and then scaled to obstacle-rich scenes; this validated reward shaping and observation design.
+### Iteration 3 - Realistic Dynamics + Pure Torque Control
 
-<p align="center">
-  <img src="assets/2obs_train.gif" alt="Training with 2 obstacles" width="400">
-</p>
+Control migrated from a PD-assisted setup to direct torque control with manipulator dynamics:
 
-### Iteration 3 - Dynamic Obstacles
+- inertia matrix
+- Coriolis terms
+- gravity vector
 
-Switched from static placements to randomized and moving obstacles (elliptic trajectories with random phase), requiring reactive behavior.
+Also added gravity compensation in applied torque, which stabilized learning.
 
-<p align="center">
-  <img src="assets/early_train.gif" alt="Training with moving obstacles" width="600">
-</p>
+### Iteration 4 - Sigma and Loss Stabilization
 
-### Iteration 4 - Stalled Robot Behavior
+Observed unstable behavior around exploration scale (`sigma`) and KL spikes. Resolution steps:
 
-In early reward versions, agent sometimes preferred low-motion behavior near obstacles to avoid penalties.
+1. Added explicit KL tracking during PPO epochs
+2. Tracked `policy_loss`, `value_loss`, `entropy` separately
+3. Rescaled/normalized value targets to avoid `value_loss` dominating updates
 
-<p align="center">
-  <img src="assets/stalled_robot.gif" alt="Stalled robot" width="400">
-</p>
+### Iteration 5 - Curriculum to Dynamic Tasks
 
-### Iteration 5 - Reward and Dynamics Stabilization
+Static-target stage reached high success but overfit. Then training moved to dynamic scenarios by extending state with obstacle positions/velocities and training on moving setups.
 
-Introduced:
+### Iteration 6 - Final Integration (planned)
 
-1. Progress emphasis with near-goal boost
-2. Stagnation-based episode termination
-3. Torque and velocity regularization
-4. Collision and timeout penalties tuned for dynamic scenes
+Planned formalization as one block: `PPO + TD + GAE + manipulator dynamics`, with unified reporting over reward/success/episode length/KL/sigma/loss components.
 
-### Final Result
-
-Policy is evaluated in scenarios with fixed/random starts and randomized obstacle motion.
+### Visual Milestones
 
 <p align="center">
   <img src="assets/test_static_obs_determined_start.gif" alt="Test - static obstacles" width="400">
@@ -280,6 +278,16 @@ From `ModelConfig`, `EnvConfig`, and `GUIConfig` defaults:
 | Max episode steps | 600 |
 | Training episodes | 3000 |
 | Test episodes | 500 |
+
+Values referenced in project report (`text.txt`) for algorithm discussion:
+
+- `gamma = 0.99`
+- `lambda = 0.95`
+- `clip epsilon = 0.2`
+- `entropy coef = 0.01`
+- `ppo epochs = 10`
+- `batch buffer = 2048`
+- `mini-batch = 256`
 
 ---
 
