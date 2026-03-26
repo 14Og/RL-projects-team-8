@@ -122,6 +122,43 @@ Config defaults (`RewardConfig`):
 | Goal reward | `goal_reward` | 80.0 |
 | Fail/timeout penalty | `fail_penalty` | 40.0 |
 
+## Physics and Torque Control
+
+### Dynamic Model
+
+The manipulator is simulated as a 3-DOF rigid-body system with:
+
+- inertia matrix \(M(q)\)
+- Coriolis/centrifugal terms \(C(q,\dot q)\dot q\)
+- gravity vector \(G(q)\)
+
+The joint dynamics are modeled as:
+
+\[
+M(q)\ddot q + C(q,\dot q)\dot q + d\dot q + G(q) = \tau
+\]
+
+where \(d\dot q\) is viscous damping and \(\tau\) is the applied joint torque.
+
+### Transition to Torque-Level RL Control
+
+Earlier iterations used an external PD stage (policy produced angle-like targets, PD converted them to torques).  
+In the final setup, this helper layer is removed and the policy directly controls torques.
+
+Current control path per step:
+
+1. policy outputs torque command \(u_t\)
+2. command is clipped by joint torque limits \(\tau_{\max}\)
+3. gravity compensation is added in the simulator
+4. dynamics are integrated with RK4 over multiple substeps
+
+So the agent is responsible for low-level stabilization and motion generation directly in torque space.
+
+### Why Gravity Compensation Is Kept
+
+Gravity compensation is retained to avoid spending most of the learning capacity on static gravity balancing.  
+This keeps the task focused on planning and obstacle-aware reaching under realistic dynamics.
+
 ---
 
 ## PPO Algorithm
