@@ -241,10 +241,16 @@ Kept PPO clip as protection from destructive policy jumps and added KL-based ear
 ### Iteration 4 - From toy physics to manipulator dynamics
 
 Moved from simplified setup to realistic 3-link dynamics with inertia matrix, Coriolis terms, and gravity vector.
+<p align="center">
+  <img src="assets/not_tuned_timestamp.gif" alt="Training with moving obstacles" width="600">
+</p>
 
 ### Iteration 5 - External PD stage and transition to pure torque control
 
 Used an external PD stage temporarily (policy produced target angles, PD converted them to torques). After review, removed PD from control loop to keep pure RL torque control.
+<p align="center">
+  <img src="assets/PD_control.gif" alt="Training with moving obstacles" width="600">
+</p>
 
 ### Iteration 6 - Gravity compensation and final loss form
 
@@ -255,6 +261,9 @@ Added gravity compensation term to applied torques to avoid wasting learning cap
 ### Iteration 7 - Non-learning sigma and failed fixes
 
 Observed sigma not adapting properly. Tried global sigma vector and manual sigma decay; manual decay caused KL explosions and aggressive early stopping.
+<p align="center">
+  <img src="assets/funny_without_obstacles.gif" alt="Training with moving obstacles" width="600">
+</p>
 
 ### Iteration 8 - KL diagnostics and loss-scale analysis
 
@@ -275,30 +284,17 @@ Transferred static-stage weights poorly to random targets. Policy overfit to one
 ### Iteration 12 - Transition to moving targets and obstacles
 
 Expanded state with obstacle positions and velocities. Switched to training directly in dynamic scenarios instead of long static pretraining.
+<p align="center">
+  <img src="assets/early_train_500_episodes.gif" alt="Training with moving obstacles" width="600">
+</p>
 
 ### Iteration 13 - Working behavior in dynamic scenes
 
 This version became the practical one: harder training but meaningful behavior in non-stationary scenes, with obstacle-aware motion and consistent target reaching.
-
-### Visual Milestones
-
 <p align="center">
-  <img src="assets/test_static_obs_determined_start.gif" alt="Test - static obstacles" width="400">
+  <img src="assets/test.gif" alt="Training with moving obstacles" width="600">
 </p>
 
-<p align="center">
-  <img src="assets/test_random_obs_determined_start.gif" alt="Test - random obstacles" width="400">
-</p>
-
-<p align="center">
-  <img src="assets/test_random_obs_random_start.gif" alt="Test - random obstacles, random start" width="400">
-</p>
-
-<p align="center">
-  <img src="assets/test_metrics_static_obs_determined_start.gif" alt="Metrics - static/determined" width="33%">
-  <img src="assets/test_metrics_random_obs_determined_start.gif" alt="Metrics - random/determined" width="33%">
-  <img src="assets/test_metrics_random_obs_random_start.gif" alt="Metrics - random/random" width="33%">
-</p>
 
 ---
 
