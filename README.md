@@ -138,20 +138,6 @@ The joint dynamics are modeled as:
 
 where `d q_dot` is viscous damping and `tau` is the applied joint torque.
 
-### Transition to Torque-Level RL Control
-
-Earlier iterations used an external PD stage (policy produced angle-like targets, PD converted them to torques).  
-In the final setup, this helper layer is removed and the policy directly controls torques.
-
-Current control path per step:
-
-1. policy outputs torque command \(u_t\)
-2. command is clipped by joint torque limits \(tau_max\)
-3. gravity compensation is added in the simulator
-4. dynamics are integrated with RK4 over multiple substeps
-
-So the agent is responsible for low-level stabilization and motion generation directly in torque space.
-
 ### Why Gravity Compensation Is Kept
 
 Gravity compensation is retained to avoid spending most of the learning capacity on static gravity balancing.  
