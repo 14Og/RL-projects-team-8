@@ -273,7 +273,7 @@ Pure MC produced noisy targets and unstable learning. Replaced with TD targets f
 
 Kept PPO clip as protection from destructive policy jumps and added KL-based early stopping. Initial KL threshold was too strict, so updates often ended after the first epoch.
 
-### Iteration 4 - From toy physics to manipulator dynamics
+### Iteration 4 - From pure kinematics to manipulator dynamics
 
 Moved from simplified setup to realistic 3-link dynamics with inertia matrix, Coriolis terms, and gravity vector.
 <p align="center">
