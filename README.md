@@ -16,7 +16,7 @@ Project workflow (per report): training started from simpler static setups and t
 | Property | Value |
 |---|---|
 | Link lengths | L1 = 90, L2 = 70, L3 = 40 (px) |
-| Action constraint | tau in [-tau_max, +tau_max], tau_max = (12, 8, 8) |
+| Action constraint | $\tau \in [-\tau_{\max}, +\tau_{\max}]$, $\tau_{\max} = (12, 8, 8)$ |
 | Goal condition | End-effector within 30 px of target |
 | Max episode length | 600 steps |
 | Obstacles (default) | 2 circles, radius 30 px |
@@ -38,10 +38,10 @@ The observation depends on `EnvConfig.obs_mode`:
 
 Base features:
 
-- `sin(theta_i), cos(theta_i)` for 3 joints -> 6
-- End-effector position `(x_ee, y_ee)` normalized by reach -> 2
-- Relative target vector `(dx, dy)` normalized by reach -> 2
-- Joint velocities `dq / 15` -> 3
+- $\sin(\theta_i), \cos(\theta_i)$ for 3 joints → 6
+- End-effector position $(x_{ee}, y_{ee})$ normalized by reach → 2
+- Relative target vector $(\Delta x, \Delta y)$ normalized by reach → 2
+- Joint velocities $\dot{q}/15$ → 3
 
 Additional features:
 
@@ -53,16 +53,16 @@ Additional features:
 
 LIDAR sensors are attached to all joints:
 
-- 8 rays per sensor, uniformly over `[0, 2pi)`
+- 8 rays per sensor, uniformly over $[0, 2\pi)$
 - Maximum ray length: 50 px
-- Reading is normalized to `[0, 1]`
+- Reading is normalized to $[0, 1]$
 - 1.0 means no hit, lower values indicate proximity to obstacle
 
 ### Action Space
 
 Continuous 3D torque vector:
 
-`a_t = (tau_1, tau_2, tau_3)`
+$$a_t = (\tau_1, \tau_2, \tau_3)$$
 
 Actions are sampled from a diagonal Gaussian policy in training mode and clipped by torque limits in the robot dynamics step.
 
@@ -72,8 +72,8 @@ Obstacle manager supports randomization and motion:
 
 - Per episode: each obstacle origin is jittered in a disk (`jitter_radius = 30`)
 - During episode: each obstacle moves on an ellipse:
-  - `x = x0 + a * cos(omega * t + phase)`
-  - `y = y0 + b * sin(omega * t + phase)`
+  - $x = x_0 + a \cos(\omega t + \phi)$
+  - $y = y_0 + b \sin(\omega t + \phi)$
 
 Default parameters:
 
@@ -84,7 +84,7 @@ Default parameters:
 | Jitter radius | 30 px |
 | Dynamic motion | enabled |
 | Ellipse semi-axes | a = 80, b = 60 |
-| Angular frequency | omega = 0.1 |
+| Angular frequency | $\omega = 0.1$ |
 
 ### Termination Conditions
 
@@ -128,19 +128,19 @@ Config defaults (`RewardConfig`):
 
 The manipulator is simulated as a 3-DOF rigid-body system with:
 
-- inertia matrix `M(q)`
-- Coriolis/centrifugal terms `C(q, q_dot) q_dot`
-- gravity vector `G(q)`
+- inertia matrix $M(q)$
+- Coriolis/centrifugal terms $C(q,\dot{q})\dot{q}$
+- gravity vector $G(q)$
 
 The joint dynamics are modeled as:
 
-`M(q) q_ddot + C(q, q_dot) q_dot + d q_dot + G(q) = tau`
+$$M(q)\ddot{q} + C(q,\dot{q})\dot{q} + d\dot{q} + G(q) = \tau$$
 
-where `d q_dot` is viscous damping and `tau` is the applied joint torque.
+where $d\dot{q}$ is viscous damping and $\tau$ is the applied joint torque.
 
 ### Why Gravity Compensation Is Kept
 
-Gravity compensation is retained to avoid spending most of the learning capacity on static gravity balancing.  
+Gravity compensation is retained to avoid spending most of the learning capacity on static gravity balancing.
 This keeps the task focused on planning and obstacle-aware reaching under realistic dynamics.
 
 ---
@@ -150,72 +150,75 @@ This keeps the task focused on planning and obstacle-aware reaching under realis
 Current training uses Actor-Critic PPO (`ppo/model_actor_critic_ppo.py`):
 
 - Shared MLP backbone (`256 -> 128`, ReLU)
-- Actor head: Gaussian mean (`tanh`-bounded by torque limits) + learnable `log_std`
-- Critic head: scalar value estimate `V(s)`
+- Actor head: Gaussian mean ($\tanh$-bounded by torque limits) + learnable $\log\sigma$
+- Critic head: scalar value estimate $V(s)$
 - On-policy buffer with batch updates
 - PPO clipped objective + value loss + entropy regularization
-- GAE (`gae_lambda = 0.95`) for advantage estimation
+- GAE ($\lambda = 0.95$) for advantage estimation
 - KL-based early stop for PPO epochs
-- TD targets for critic: `r_t + gamma * V(s_{t+1}) * (1 - done_t)`
+- TD targets for critic: $r_t + \gamma V(s_{t+1})(1 - d_t)$
 
 ### Policy / Critic Parameterization
 
-For state embedding `z = f_theta(s)`:
+For state embedding $z = f_\theta(s)$:
 
-- `mu(s) = tanh(W_mu z + b_mu) * tau_max`
-- `V(s) = W_v z + b_v`
-- `log_sigma = clamp(log_std, log_std_min, log_std_max)`
-- `sigma = exp(log_sigma) * tau_max`
+- $\mu(s) = \tanh(W_\mu z + b_\mu) \cdot \tau_{\max}$
+- $V(s) = W_v z + b_v$
+- $\log\sigma = \text{clamp}(\log\sigma,\ \log\sigma_{\min},\ \log\sigma_{\max})$
+- $\sigma = \exp(\log\sigma) \cdot \tau_{\max}$
 
 Policy distribution:
 
-- `pi_theta(a|s) = Normal(mu(s), sigma)`
-- `log pi_theta(a_t|s_t) = sum_i log Normal(a_{t,i}; mu_i, sigma_i)`
+- $\pi_\theta(a|s) = \mathcal{N}(\mu(s), \sigma)$
+- $\log\pi_\theta(a_t|s_t) = \sum_i \log\mathcal{N}(a_{t,i};\, \mu_i, \sigma_i)$
 
 ### TD Targets and GAE
 
-- `target_t = r_t + gamma * V(s_{t+1}) * (1 - done_t)`
-- `delta_t = r_t + gamma * V(s_{t+1}) * (1 - done_t) - V(s_t)`
-- `A_t = delta_t + gamma * lambda * (1 - done_t) * A_{t+1}`
-- `A_t <- (A_t - mean(A)) / (std(A) + eps)`
+$$\hat{V}_t = r_t + \gamma V(s_{t+1})(1 - d_t)$$
+
+$$\delta_t = r_t + \gamma V(s_{t+1})(1 - d_t) - V(s_t)$$
+
+$$A_t = \delta_t + \gamma\lambda(1 - d_t)\,A_{t+1}$$
+
+$$A_t \leftarrow \frac{A_t - \bar{A}}{\text{std}(A) + \varepsilon}$$
 
 ### PPO Objectives
 
 Likelihood ratio:
 
-- `r_t(theta) = exp(log pi_theta(a_t|s_t) - log pi_{old}(a_t|s_t))`
+$$\rho_t(\theta) = \exp\!\bigl(\log\pi_\theta(a_t|s_t) - \log\pi_{\text{old}}(a_t|s_t)\bigr)$$
 
 Clipped surrogate for actor:
 
-- `L_clip = E_{T ~ Uniform[0, T_b - 1]}[\min(r_t * A_t, clip(r_t, 1-eps, 1+eps) * A_t)]`
+$$L^{\text{clip}} = \mathbb{E}_t\bigl[\min\!\bigl(\rho_t A_t,\ \text{clip}(\rho_t,\,1{-}\varepsilon,\,1{+}\varepsilon)\,A_t\bigr)\bigr]$$
 
 Critic loss (in code with normalized targets per mini-batch):
 
-- `L_value = MSE(V_norm(s_t), target_norm_t)`
+$$L^{\text{value}} = \text{MSE}\!\bigl(\hat{V}_{\text{norm}}(s_t),\ \hat{V}^{\text{target}}_{\text{norm},t}\bigr)$$
 
 Entropy bonus:
 
-- `H = E_{T ~ Uniform[0, T_b - 1]}[\sum_i H(Normal(mu_i, sigma_i))]`
+$$H = \mathbb{E}_t\!\left[\sum_i \mathcal{H}\!\bigl(\mathcal{N}(\mu_i, \sigma_i)\bigr)\right]$$
 
 Total minimized loss in code:
 
-- `loss = -L_clip + value_loss_coef * L_value - entropy_coef * H`
+$$\mathcal{L} = -L^{\text{clip}} + c_v\,L^{\text{value}} - c_H\,H$$
 
 KL control (approximation used in code):
 
-- `D_KL ~= E_{T ~ Uniform[0, T_b - 1]}[(r_t - 1) - log r_t]`
+$$D_{\text{KL}} \approx \mathbb{E}_t\bigl[(\rho_t - 1) - \log\rho_t\bigr]$$
 
-If `D_KL > target_kl`, PPO epoch loop is stopped early.
+If $D_{\text{KL}} > D_{\text{KL}}^{\text{target}}$, PPO epoch loop is stopped early.
 
 ### How Sigma Is Updated
 
-Current implementation uses **global trainable `log_std`** (`nn.Parameter` of size 3), not a separate sigma head per state.
+Current implementation uses **global trainable $\log\sigma$** (`nn.Parameter` of size 3), not a separate sigma head per state.
 
-- `log_std` is optimized jointly with all policy parameters by Adam during PPO backpropagation.
-- It is constrained every forward pass by `clamp(log_std_min, log_std_max)`.
+- $\log\sigma$ is optimized jointly with all policy parameters by Adam during PPO backpropagation.
+- It is constrained every forward pass by $\text{clamp}(\log\sigma_{\min}, \log\sigma_{\max})$.
 - Effective exploration scale per joint is:
-  - `sigma_j = exp(clamp(log_std_j)) * tau_max_j`
-- So sigma changes only through gradient updates from PPO loss (policy term + entropy term), with no manual sigma decay schedule.
+  - $\sigma_j = \exp\!\bigl(\text{clamp}(\log\sigma_j)\bigr) \cdot \tau_{\max,j}$
+- So $\sigma$ changes only through gradient updates from PPO loss (policy term + entropy term), with no manual sigma decay schedule.
 
 ### Why Actor-Critic PPO
 
@@ -234,14 +237,14 @@ Compared to policy-gradient-only variants, current implementation:
 4. Normalize advantages over the batch
 5. For up to `ppo_epochs`:
    - estimate KL on full batch
-   - stop early if KL > `target_kl`
+   - stop early if $D_{\text{KL}} > D_{\text{KL}}^{\text{target}}$
    - optimize shuffled mini-batches
 6. Step cosine annealing scheduler
 7. Clear batch buffer
 
 Loss used in code:
 
-`loss = policy_loss + value_loss_coef * value_loss - entropy_coef * entropy`
+$$\mathcal{L} = L^{\text{policy}} + c_v\,L^{\text{value}} - c_H\,H$$
 
 ---
 
@@ -249,11 +252,11 @@ Loss used in code:
 
 ### Iteration 1 - Base actor-critic + MC + PPO clip
 
-Started from a basic setup: one network outputs `mu`, `sigma`, and `V(s)`, actions sampled from Gaussian policy, Monte Carlo returns for advantages (`A = R - V`), PPO clipped objective with value loss and entropy.
+Started from a basic setup: one network outputs $\mu$, $\sigma$, and $V(s)$, actions sampled from Gaussian policy, Monte Carlo returns for advantages ($A = R - V$), PPO clipped objective with value loss and entropy.
 
 ### Iteration 2 - From pure MC to TD + GAE
 
-Pure MC produced noisy targets and unstable learning. Replaced with TD targets for critic (`r + gamma * V(s')`) and GAE for actor advantages, then normalized advantages per batch.
+Pure MC produced noisy targets and unstable learning. Replaced with TD targets for critic ($r + \gamma V(s')$) and GAE for actor advantages, then normalized advantages per batch.
 
 ### Iteration 3 - Understanding PPO role and KL early stopping tuning
 
@@ -277,22 +280,22 @@ Used an external PD stage temporarily (policy produced target angles, PD convert
 
 Added gravity compensation term to applied torques to avoid wasting learning capacity on static gravity balancing. Training stabilized. Settled on:
 
-`loss = policy_loss + value_loss_coef * value_loss - entropy_coef * entropy`
+$$\mathcal{L} = L^{\text{policy}} + c_v\,L^{\text{value}} - c_H\,H$$
 
 ### Iteration 7 - Non-learning sigma and failed fixes
 
-Observed sigma not adapting properly. Tried global sigma vector and manual sigma decay; manual decay caused KL explosions and aggressive early stopping.
+Observed $\sigma$ not adapting properly. Tried global sigma vector and manual sigma decay; manual decay caused KL explosions and aggressive early stopping.
 <p align="center">
   <img src="assets/funny_without_obstacles.gif" alt="Training with moving obstacles" width="600">
 </p>
 
 ### Iteration 8 - KL diagnostics and loss-scale analysis
 
-Added deeper diagnostics: KL, `policy_loss`, `value_loss`, and entropy tracking. Found strong scale imbalance where `value_loss` dominated updates.
+Added deeper diagnostics: KL, $L^{\text{policy}}$, $L^{\text{value}}$, and entropy tracking. Found strong scale imbalance where $L^{\text{value}}$ dominated updates.
 
 ### Iteration 9 - Value normalization and sigma recovery
 
-Normalized/scaled value targets and tuned value-loss influence. After balancing losses, sigma started decreasing naturally and KL behavior became more stable.
+Normalized/scaled value targets and tuned value-loss influence. After balancing losses, $\sigma$ started decreasing naturally and KL behavior became more stable.
 
 ### Iteration 10 - Curriculum: static-target stage
 
@@ -359,31 +362,31 @@ From `ModelConfig`, `EnvConfig`, and `GUIConfig` defaults:
 | Parameter | Value |
 |---|---|
 | Hidden layers | 256 -> 128 (ReLU) |
-| Discount gamma | 0.97 |
-| GAE lambda | 0.95 |
+| Discount $\gamma$ | 0.97 |
+| GAE $\lambda$ | 0.95 |
 | Learning rate | 3e-4 -> 1e-6 (cosine annealing) |
-| Clip coefficient epsilon | 0.2 |
+| Clip coefficient $\varepsilon$ | 0.2 |
 | PPO epochs per update | 10 |
 | Mini-batch size | 512 |
 | Batch size limit | 2048 steps |
 | Target KL | 0.15 |
-| Entropy coefficient | 0.002 |
-| Value loss coefficient | 0.1 |
+| Entropy coefficient $c_H$ | 0.002 |
+| Value loss coefficient $c_v$ | 0.1 |
 | Gradient clip norm | 1.0 |
-| log_std range | [-3.0, -0.7] |
+| $\log\sigma$ range | [-3.0, -0.7] |
 | Max episode steps | 600 |
 | Training episodes | 3000 |
 | Test episodes | 500 |
 
 Values referenced in project report (`text.txt`) for algorithm discussion:
 
-- `gamma = 0.99`
-- `lambda = 0.95`
-- `clip epsilon = 0.2`
-- `entropy coef = 0.01`
-- `ppo epochs = 10`
-- `batch buffer = 2048`
-- `mini-batch = 256`
+- $\gamma = 0.99$
+- $\lambda = 0.95$
+- clip $\varepsilon = 0.2$
+- $c_H = 0.01$
+- PPO epochs = 10
+- batch buffer = 2048
+- mini-batch = 256
 
 ---
 
@@ -454,7 +457,7 @@ Training plots include:
 - Applied torques per joint
 - Value loss
 - KL divergence
-- Sigma per joint
+- $\sigma$ per joint
 - Collision rate
 - Entropy
 - Success rate
@@ -464,7 +467,3 @@ Test plots include:
 - Cumulative success rate
 - Cumulative collision rate
 - Angle error trace (if available in metrics)
-
-
-
-
