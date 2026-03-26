@@ -242,7 +242,7 @@ Kept PPO clip as protection from destructive policy jumps and added KL-based ear
 
 Moved from simplified setup to realistic 3-link dynamics with inertia matrix, Coriolis terms, and gravity vector.
 <p align="center">
-  <img src="assets/not_tuned_timestamps.gif" alt="Training with moving obstacles" width="600">
+  <img src="assets/not_tuned_timesteps.gif" alt="Training with moving obstacles" width="600">
 </p>
 
 ### Iteration 5 - External PD stage and transition to pure torque control
