@@ -190,7 +190,7 @@ $$\rho_t(\theta) = \exp\!\bigl(\log\pi_\theta(a_t|s_t) - \log\pi_{\text{old}}(a_
 
 Clipped surrogate for actor:
 
-$$L^{\text{clip}} = \mathbb{E}_t\bigl[\min\!\bigl(\rho_t A_t,\ \text{clip}(\rho_t,\,1{-}\varepsilon,\,1{+}\varepsilon)\,A_t\bigr)\bigr]$$
+$$L^{\text{clip}} = \mathbb{E}_{T\sim \mathrm{Uniform}[0, T_b - 1]}\bigl[\min\bigl(\rho_t A_t,\ \text{clip}(\rho_t,\,1{-}\varepsilon,\,1{+}\varepsilon)\,A_t\bigr)\bigr]$$
 
 Critic loss (in code with normalized targets per mini-batch):
 
@@ -198,7 +198,7 @@ $$L^{\text{value}} = \text{MSE}\!\bigl(\hat{V}_{\text{norm}}(s_t),\ \hat{V}^{\te
 
 Entropy bonus:
 
-$$H = \mathbb{E}_t\!\left[\sum_i \mathcal{H}\!\bigl(\mathcal{N}(\mu_i, \sigma_i)\bigr)\right]$$
+$$H = \mathbb{E}_{T\sim \mathrm{Uniform}[0, T_b - 1]}\left[\sum_i \mathcal{H}\bigl(\mathcal{N}(\mu_i, \sigma_i)\bigr)\right]$$
 
 Total minimized loss in code:
 
@@ -206,7 +206,7 @@ $$\mathcal{L} = -L^{\text{clip}} + c_v\,L^{\text{value}} - c_H\,H$$
 
 KL control (approximation used in code):
 
-$$D_{\text{KL}} \approx \mathbb{E}_t\bigl[(\rho_t - 1) - \log\rho_t\bigr]$$
+$$D_{\text{KL}} \approx \mathbb{E}_{T\sim \mathrm{Uniform}[0, T_b - 1]}\bigl[(\rho_t - 1) - \log\rho_t\bigr]$$
 
 If $D_{\text{KL}} > D_{\text{KL}}^{\text{target}}$, PPO epoch loop is stopped early.
 
@@ -217,7 +217,7 @@ Current implementation uses **global trainable $\log\sigma$** (`nn.Parameter` of
 - $\log\sigma$ is optimized jointly with all policy parameters by Adam during PPO backpropagation.
 - It is constrained every forward pass by $\text{clamp}(\log\sigma_{\min}, \log\sigma_{\max})$.
 - Effective exploration scale per joint is:
-  - $\sigma_j = \exp\!\bigl(\text{clamp}(\log\sigma_j)\bigr) \cdot \tau_{\max,j}$
+  - $\sigma_j = \exp\bigl(\text{clamp}(\log\sigma_j)\bigr) \cdot \tau_{\max,j}$
 - So $\sigma$ changes only through gradient updates from PPO loss (policy term + entropy term), with no manual sigma decay schedule.
 
 ### Why Actor-Critic PPO
