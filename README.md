@@ -128,17 +128,15 @@ Config defaults (`RewardConfig`):
 
 The manipulator is simulated as a 3-DOF rigid-body system with:
 
-- inertia matrix \(M(q)\)
-- Coriolis/centrifugal terms \(C(q,\dot q)\dot q\)
-- gravity vector \(G(q)\)
+- inertia matrix `M(q)`
+- Coriolis/centrifugal terms `C(q, q_dot) q_dot`
+- gravity vector `G(q)`
 
 The joint dynamics are modeled as:
 
-\[
-M(q)\ddot q + C(q,\dot q)\dot q + d\dot q + G(q) = \tau
-\]
+`M(q) q_ddot + C(q, q_dot) q_dot + d q_dot + G(q) = tau`
 
-where \(d\dot q\) is viscous damping and \(\tau\) is the applied joint torque.
+where `d q_dot` is viscous damping and `tau` is the applied joint torque.
 
 ### Transition to Torque-Level RL Control
 
