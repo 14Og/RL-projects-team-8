@@ -195,7 +195,7 @@ $$L^{\text{clip}} = \mathbb{E}_{T\sim \mathrm{Uniform}[0, T_b - 1]}\bigl[\min\bi
 
 Critic loss (in code with normalized targets per mini-batch):
 
-$$L^{\text{value}} = \text{MSE}\!\bigl(\hat{V}_{\text{norm}}(s_t),\ \hat{V}^{\text{target}}_{\text{norm},t}\bigr)$$
+$$L^{\text{value}} = \text{MSE}\bigl(\hat{V}_{\text{norm}}(s_t),\ \hat{V}^{\text{target}}_{\text{norm},t}\bigr)$$
 
 Entropy bonus:
 
