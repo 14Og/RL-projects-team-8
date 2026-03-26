@@ -191,7 +191,7 @@ $$\rho_t(\theta) = \exp\bigl(\log\pi_\theta(a_t|s_t) - \log\pi_{\text{old}}(a_t|
 
 Clipped surrogate for actor:
 
-$$L^{\text{clip}} = \mathbb{E}_{T\sim \mathrm{Uniform}[0, T_b - 1]}\bigl[\min\bigl(\rho_t A_t,\ \text{clip}(\rho_t,1{-}\varepsilon,1{+}\varepsilon)\A_t\bigr)\bigr]$$
+$$L^{\text{clip}} = \mathbb{E}_{T\sim \mathrm{Uniform}[0, T_b - 1]}\bigl[\min\bigl(\rho_t A_t,\ \text{clip}(\rho_t,1{-}\varepsilon,1{+}\varepsilon) A_t\bigr)\bigr]$$
 
 Critic loss (in code with normalized targets per mini-batch):
 
