@@ -146,7 +146,7 @@ This keeps the task focused on planning and obstacle-aware reaching under realis
 
 ---
 
-## Q-Learning Algorithm
+## PPO + Actor-Critic algorithm
 
 Current training uses Actor-Critic PPO (`ppo/model_actor_critic_ppo.py`):
 
