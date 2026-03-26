@@ -146,7 +146,7 @@ In the final setup, this helper layer is removed and the policy directly control
 Current control path per step:
 
 1. policy outputs torque command \(u_t\)
-2. command is clipped by joint torque limits \(\tau_{\max}\)
+2. command is clipped by joint torque limits \(tau_max\)
 3. gravity compensation is added in the simulator
 4. dynamics are integrated with RK4 over multiple substeps
 
@@ -201,7 +201,7 @@ Likelihood ratio:
 
 Clipped surrogate for actor:
 
-- `L_clip = E[min(r_t * A_t, clip(r_t, 1-eps, 1+eps) * A_t)]`
+- `L_clip = E_{T ~ Uniform[0, T_b - 1]}[\min(r_t * A_t, clip(r_t, 1-eps, 1+eps) * A_t)]`
 
 Critic loss (in code with normalized targets per mini-batch):
 
@@ -209,7 +209,7 @@ Critic loss (in code with normalized targets per mini-batch):
 
 Entropy bonus:
 
-- `H = E[sum_i H(Normal(mu_i, sigma_i))]`
+- `H = E_{T ~ Uniform[0, T_b - 1]}[\sum_i H(Normal(mu_i, sigma_i))]`
 
 Total minimized loss in code:
 
@@ -217,7 +217,7 @@ Total minimized loss in code:
 
 KL control (approximation used in code):
 
-- `D_KL ~= E[(r_t - 1) - log r_t]`
+- `D_KL ~= E_{T ~ Uniform[0, T_b - 1]}[(r_t - 1) - log r_t]`
 
 If `D_KL > target_kl`, PPO epoch loop is stopped early.
 
@@ -478,3 +478,7 @@ Test plots include:
 - Cumulative success rate
 - Cumulative collision rate
 - Angle error trace (if available in metrics)
+
+
+
+
