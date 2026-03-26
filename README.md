@@ -170,7 +170,7 @@ For state embedding $z = f_\theta(s)$:
 Policy distribution:
 
 - $\pi_\theta(a|s) = \mathcal{N}(\mu(s), \sigma)$
-- $\log\pi_\theta(a_t|s_t) = \sum_i \log\mathcal{N}(a_{t,i};\, \mu_i, \sigma_i)$
+- $\log\pi_\theta(a_t|s_t) = \sum_i \log\mathcal{N}(a_{t,i}; \mu_i, \sigma_i)$
 
 ### TD Targets and GAE
 
@@ -186,11 +186,11 @@ $$A_t \leftarrow \frac{A_t - \bar{A}}{\text{std}(A) + \varepsilon}$$
 
 Likelihood ratio:
 
-$$\rho_t(\theta) = \exp\!\bigl(\log\pi_\theta(a_t|s_t) - \log\pi_{\text{old}}(a_t|s_t)\bigr)$$
+$$\rho_t(\theta) = \exp\bigl(\log\pi_\theta(a_t|s_t) - \log\pi_{\text{old}}(a_t|s_t)\bigr)$$
 
 Clipped surrogate for actor:
 
-$$L^{\text{clip}} = \mathbb{E}_{T\sim \mathrm{Uniform}[0, T_b - 1]}\bigl[\min\bigl(\rho_t A_t,\ \text{clip}(\rho_t,\,1{-}\varepsilon,\,1{+}\varepsilon)\,A_t\bigr)\bigr]$$
+$$L^{\text{clip}} = \mathbb{E}_{T\sim \mathrm{Uniform}[0, T_b - 1]}\bigl[\min\bigl(\rho_t A_t,\ \text{clip}(\rho_t,1{-}\varepsilon,1{+}\varepsilon)\,A_t\bigr)\bigr]$$
 
 Critic loss (in code with normalized targets per mini-batch):
 
@@ -202,7 +202,7 @@ $$H = \mathbb{E}_{T\sim \mathrm{Uniform}[0, T_b - 1]}\left[\sum_i \mathcal{H}\bi
 
 Total minimized loss in code:
 
-$$\mathcal{L} = -L^{\text{clip}} + c_v\,L^{\text{value}} - c_H\,H$$
+$$\mathcal{L} = -L^{\text{clip}} + c_v L^{\text{value}} - c_H H$$
 
 KL control (approximation used in code):
 
@@ -244,7 +244,7 @@ Compared to policy-gradient-only variants, current implementation:
 
 Loss used in code:
 
-$$\mathcal{L} = L^{\text{policy}} + c_v\,L^{\text{value}} - c_H\,H$$
+$$\mathcal{L} = -L^{\text{clip}} + c_v L^{\text{value}} - c_H H$$
 
 ---
 
